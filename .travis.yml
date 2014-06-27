@@ -19,7 +19,7 @@ install:
   - export PATH=${PATH}:${HOME}/bin
   - luarocks install copastimer
   - luarocks install serpent
-  - luarocks install lfs
+  - luarocks install luafilesystem
   - luarocks install dkjson
   - luarocks build rocks/lpack-master-1.rockspec
   - luarocks build rocks/lua-websockets-master-1.rockspec
