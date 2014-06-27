@@ -1,4 +1,7 @@
+#! /usr/bin/env lua
+
 local pretty = require "pl.pretty"
+local json   = require "dkjson"
 
 local websocket = require'websocket'
 local client = websocket.client.sync { timeout = 2 }
@@ -8,38 +11,50 @@ if not ok then
    print('Cannot connect: ', err)
 end
 
-client:send [[
-  { "action": "get-model" }
-]]
+client:send "my-token"
+
+client:send (json.encode {
+  action = "get-model"
+})
 print (client:receive())
 
-client:send [[
-  { "action": "list-patches" }
-]]
+client:send (json.encode {
+  action = "list-patches"
+})
 print (client:receive())
 
-client:send [[
-  { "action": "add-patch", "origin": "me" }
+client:send (json.encode {
+  action = "add-patch",
+  origin = "me",
+  data   = [[
   cosy.model = {}
-]]
+  ]]
+})
 print (client:receive())
 
-client:send [[
-  { "action": "list-patches" }
-]]
+client:send (json.encode {
+  action = "list-patches"
+})
 print (client:receive())
 
-client:send [[
-  { "action": "add-patch", "origin": "me" }
-  cosy.model.x = 1
-  cosy.model.y = 2
-]]
+client:send (json.encode {
+  action = "add-patch",
+  origin = "me",
+  data = [[
+  cosy.model.x = "some text"
+  cosy.model.y = 42
+  ]]
+})
 print (client:receive())
 
-client:send [[
-  { "action": "get-model" }
-]]
+client:send (json.encode {
+  action = "get-model"
+})
 print (client:receive())
 
+client:send (json.encode {
+  action = "get-patches"
+})
+print (client:receive())
 
 client:close()

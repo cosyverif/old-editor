@@ -4,7 +4,7 @@ cosy = {}
 
 local logging   = require "logging"
 logging.console = require "logging.console"
-local logger = logging.console ()
+local logger = logging.console "%level %message\n"
 
 local copas   = require "copas.timer"
 local server  = require "websocket" . server . copas
@@ -23,13 +23,18 @@ cli:add_argument(
   "path to the model directory"
 )
 cli:add_option(
-  "-t, --timeout=<in seconds>",
-  "delay after the last connexion before shutdown",
-  "60"
+  "-p, --port=<number>",
+  "port to use",
+  "8080"
 )
 cli:add_flag(
   "-s, --safe",
   "dump model after each patch for safety"
+)
+cli:add_option(
+  "-t, --timeout=<in seconds>",
+  "delay after the last connexion before shutdown",
+  "60"
 )
 cli:add_flag(
   "-v, --verbose",
@@ -41,10 +46,11 @@ if not args then
   return
 end
 
-local timeout      = tonumber (args.t) -- seconds
 local directory    = args.directory
 local token        = args.token
+local port         = args.p
 local safe_mode    = args.s
+local timeout      = tonumber (args.t) -- seconds
 local verbose_mode = args.v
 
 if verbose_mode then
@@ -65,6 +71,10 @@ local clients = {}
 local patches = {}
 local timestamp_suffix = 1
 local latest_timestamp = nil
+
+local ADMIN_ACCESS = {}
+local WRITE_ACCESS = {}
+local READ_ACCESS  = {}
 
 local function is_empty (t)
   return pairs (t) (t, nil) == nil
@@ -176,93 +186,91 @@ end
 
 local function handle_request (message)
   local result = {}
-  local data   = nil
   -- Extract command and data:
-  local p = message:find ("\n")
-  local command_str = message:sub (1, p-1)
-  local patch_str   = message:sub (p+1)
-  local command, _, err = json.decode (command_str)
+  local command, _, err = json.decode (message)
   if err then
     result.status = "rejected"
-    result.reason = "Header is not valid JSON: " .. err .. "."
+    result.reason = "Command is not valid JSON: " .. err .. "."
     return result
   end
   if not command then
     result.status = "rejected"
-    result.reason = "Header is empty."
+    result.reason = "Command is empty."
     return result
   end
-  -- Extract meta info:
+  -- Extract action:
   local action = command.action:lower ()
   if not action then
     result.status = "rejected"
-    result.reason = "Header has no 'action' key."
+    result.reason = "Command has no 'action' key."
     return result
   end
   -- Perform command:
   if     action == "get-model" then
     result.status = "accepted"
-    data = serpent.dump (cosy.model)
+    result.data = serpent.dump (cosy.model)
   elseif action == "list-patches" then
     result.status = "accepted"
-    result.patches = patches
-  elseif action == "get-patch" then
+    local from = command.from
+    local to   = command.to
+    if not from and not to then
+      result.patches = patches
+    else
+      local extracted = {}
+      for _, i in ipairs (patches) do
+        if (not from or from <= i) and (not to or i <= to) then
+          extracted [#extracted + 1] = { id = i }
+        end
+      end
+      result.patches = extracted
+    end
+  elseif action == "get-patches" then
     local id   = command.id
     local from = command.from
     local to   = command.to
-    if id and not from and not to then
-      data = lfs.attributes (patches_directory .. id .. ".lua")
-      if data then
+    if id and (from or to) then
+      result.status = "rejected"
+      result.reason = "Command 'get-patches' requires 'id' or ('from'? and 'to'?)."
+      return result
+    elseif id then
+      if lfs.attributes (patches_directory .. id .. ".lua") then
         result.status = "accepted"
+        result.patches = { [id] = read_file (patches_directory .. id .. ".lua") }
       else
         result.status = "rejected"
         result.reason = "Patch '" .. id .. "' does not exist."
       end
-    elseif not id and (from or to) then
+    else
+      local extracted = {}
       for _, i in ipairs (patches) do
-        local extracted = {}
-        local in_range = (to == nil)
-        local saw_from = false
-        local saw_to   = false
-        if i == from then
-          in_range = true
-          extracted [#extracted + 1] = i
-        elseif i == to then
-          in_range = false
-          extracted [#extracted + 1] = i
-        elseif in_range then
-          extracted [#extracted + 1] = i
+        if (not from or from <= i) and (not to or i <= to) then
+          extracted [#extracted + 1] = {
+            id = i,
+            data = read_file (patches_directory .. i .. ".lua"),
+          }
         end
       end
-      if from and not saw_from then
-        result.status = "rejected"
-        result.reason = "Patch '" .. from .. "' does not exist."
-      end
-      if to and not saw_to then
-        result.status = "rejected"
-        result.reason = "Patch '" .. to .. "' does not exist."
-      end
       result.status = "accepted"
-      for k, v in ipairs (extracted) do
-        extracted [k] = read_file (patches_directory .. v .. ".lua")
-      end
       result.patches = extracted
-    else
-      result.status = "rejected"
-      result.reason = "get-patch requires an 'id' or a range 'from' .. 'to'."
     end
   elseif action == "add-patch" then
     local origin = command.origin
     if not origin then
       result.status = "rejected"
-      result.reason = "Header has no 'origin' key."
+      result.reason = "Command has no 'origin' key."
       return result
     end
+    local patch_str = command.data
+    if not patch_str then
+      result.status = "rejected"
+      result.reason = "Command has no 'data' key containing the patch."
+      return result
+    end
+    result.action = "add-patch"
     result.origin = origin
     local s, err = pcall (function () loadstring (patch_str) () end)
     if s then
-      result.status = "accepted"
-      data = patch_str
+      result.status  = "accepted"
       local timestamp = os.time ()
       if timestamp == latest_timestamp then
         timestamp_suffix = timestamp_suffix + 1
@@ -271,6 +279,7 @@ local function handle_request (message)
       end
       latest_timestamp = timestamp
       local id = tostring (timestamp) .. "-" .. string.format ("%09d", timestamp_suffix)
+      result.patches = { { id = id, data = patch_str } }
       patches [#patches + 1] = id
       patch_str = "-- " .. os.date ("Created on %A %d %B %Y, at %X", timestamp) ..
                   ", from origin '" .. origin .. "'.\n" ..
@@ -284,39 +293,49 @@ local function handle_request (message)
       result.status = "rejected"
       result.reason = "Error while loading patch: " .. err .. "."
     end
+  elseif action == "set-user" then
+    -- TODO
   else
     result.status = "rejected"
     result.reason = "Action '" .. action .. "' is not defined."
   end
-  return result, data
+  return result
 end
 
 server.listen {
-  port = 8080,
+  port = port,
   protocols = {
     ["cosy"] = function (ws)
       logger:info ("Client " .. tostring (ws) .. " is connecting...")
       timer:cancel ()
-      clients [ws] = true
-      while true do
-        local message = ws:receive()
-        if message then
-          logger:debug ("Message received:\n" .. message)
-          local result, data = handle_request (message)
-          if result.status == "accepted" then
-            logger:debug ("Message is successfully handled. Sending answer to all clients...")
-            local answer = json.encode (result) .. "\n" .. (data or "")
-            logger:debug ("Answer is:\n" .. answer)
-            for client in pairs (clients) do
-              logger:debug ("  Sending to " .. tostring (client) .. "...")
-              client:send (answer)
+      clients [ws] = {}
+      local auth_message = ws:receive ()
+      if auth_message then
+        auth_message = auth_message:match'^%s*(.*%S)'
+        if auth_message == token then
+          clients [ws] [ADMIN_ACCESS] = true
+        else
+          clients [ws] [WRITE_ACCESS] = true -- TODO: fix
+          clients [ws] [READ_ACCESS ] = true -- TODO: fix
+        end
+        while true do
+          local message = ws:receive()
+          if message then
+            local result = handle_request (message)
+            if result.status == "accepted" then
+              logger:debug ("Message is successfully handled. Sending answer to all clients...")
+              local answer = json.encode (result)
+              for client in pairs (clients) do
+                logger:debug ("  Sending to " .. tostring (client) .. "...")
+                client:send (answer)
+              end
+            else
+              logger:debug ("Message cannot be handled. Sending error to its source client...")
+              ws:send (result)
             end
           else
-            logger:debug ("Message cannot be handled. Sending error to its source client...")
-            ws:send (result)
+            break
           end
-        else
-          break
         end
       end
       logger:info ("Client " .. tostring (ws) .. " has disconnected.")
@@ -328,5 +347,6 @@ server.listen {
 }
 
 init ()
+logger:info ("Listening on port " .. tostring (port) .. ".")
 logger:info "Entering main loop..."
 copas.loop()
