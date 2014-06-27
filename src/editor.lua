@@ -197,12 +197,12 @@ handlers ["get-model"] = function (client, command)
   local access = tokens [clients [client] . token]
   if not access or not access [READ_ACCESS] then
     return {
-      status = "rejected",
+      accepted = false,
       reason = "User does not have 'read' permission.",
     }
   end
   return {
-    status = "accepted",
+    accepted = true,
     data = serpent.dump (cosy.model),
   }
 end
@@ -211,25 +211,21 @@ handlers ["list-patches"] = function (client, command)
   local access = tokens [clients [client] . token]
   if not access or not access [READ_ACCESS] then
     return {
-      status = "rejected",
+      accepted = false,
       reason = "User does not have 'read' permission.",
     }
   end
   local from = command.from
   local to   = command.to
   local extracted = {}
-  if not from and not to then
-    extracted = patches
-  else
-    for _, i in ipairs (patches) do
-      if (not from or from <= i) and (not to or i <= to) then
-        extracted [#extracted + 1] = { id = i }
-      end
+  for _, i in ipairs (patches) do
+    if (not from or from <= i) and (not to or i <= to) then
+      extracted [#extracted + 1] = { id = i }
     end
   end
   return {
-    status  = "accepted",
-    patches = extracted,
+    accepted = true,
+    patches  = extracted,
   }
 end
 
@@ -237,7 +233,7 @@ handlers ["get-patches"] = function (client, command)
   local access = tokens [clients [client] . token]
   if not access or not access [READ_ACCESS] then
     return {
-      status = "rejected",
+      accepted = false,
       reason = "User does not have 'read' permission.",
     }
   end
@@ -247,7 +243,7 @@ handlers ["get-patches"] = function (client, command)
   local extracted = {}
   if id and (from or to) then
     return {
-      status = "rejected",
+      accepted = false,
       reason = "Command 'get-patches' requires 'id' or ('from'? and 'to'?).",
     }
   elseif id then
@@ -258,7 +254,7 @@ handlers ["get-patches"] = function (client, command)
       }
     else
       return {
-        status = "rejected",
+        accepted = false,
         reason = "Patch '" .. id .. "' does not exist.",
       }
     end
@@ -273,7 +269,7 @@ handlers ["get-patches"] = function (client, command)
     end
   end
   return {
-    status = "accepted",
+    accepted = true,
     patches = extracted,
   }
 end
@@ -282,21 +278,21 @@ handlers ["add-patch"] = function (client, command)
   local access = tokens [clients [client] . token]
   if not access or not access [WRITE_ACCESS] then
     return {
-      status = "rejected",
+      accepted = false,
       reason = "User does not have 'write' permission.",
     }
   end
   local origin = command.origin
   if not origin then
     return {
-      status = "rejected",
+      accepted = false,
       reason = "Command has no 'origin' key.",
     }
   end
   local patch_str = command.data
   if not patch_str then
     return {
-      status = "rejected",
+      accepted = false,
       reason = "Command has no 'data' key containing the patch.",
     }
   end
@@ -319,16 +315,26 @@ handlers ["add-patch"] = function (client, command)
       write_file (data_file, serpent.dump (cosy.model))
       write_file (version_file, patches [#patches])
     end
-    return {
-      status  = "accepted",
-      action  = command.action,
-      origin  = origin,
-      id      = id,
+    local update = json_encode {
+      action  = "update",
       patches = { { id = id, data = patch_str } },
+    }
+    for c in pairs (clients) do
+      if c ~= client then
+        logger:debug ("  Sending to " .. tostring (client) .. "...")
+        c:send (answer)
+      end
+    end
+    return {
+      accepted = true,
+      action   = command.action,
+      origin   = origin,
+      id       = id,
+      patches  = { { id = id, data = patch_str } },
     }
   else
     return {
-      status = "rejected",
+      accepted = false,
       reason = "Error while loading patch: " .. err .. ".",
     }
   end
@@ -338,14 +344,14 @@ handlers ["set-token"] = function (client, command)
   local access = tokens [clients [client] . token]
   if not access or not access [ADMIN_ACCESS] then
     return {
-      status = "rejected",
+      accepted = false,
       reason = "Command 'set-user' is restricted to administrator.",
     }
   end
   local token = command.token
   if not token then
     return {
-      status = "rejected",
+      accepted = false,
       reason = "Command 'set-user' requires a 'token'.",
     }
   end
@@ -355,7 +361,7 @@ handlers ["set-token"] = function (client, command)
     [ADMIN_ACCESS] = nil,
   }
   return {
-    status = "accepted",
+    accepted = true,
   }
 end
 
@@ -365,13 +371,13 @@ local function handle_request (client, message)
   local command, _, err = json.decode (message)
   if err then
     return {
-      status = "rejected",
+      accepted = false,
       reason = "Command is not valid JSON: " .. err .. ".",
     }
   end
   if not command then
     return {
-      status = "rejected",
+      accepted = false,
       reason = "Command is empty.",
     }
   end
@@ -379,7 +385,7 @@ local function handle_request (client, message)
   local action = command.action:lower ()
   if not action then
     return {
-      status = "rejected",
+      accepted = false,
       reason = "Command has no 'action' key.",
     }
   end
@@ -387,7 +393,7 @@ local function handle_request (client, message)
     return handlers [action] (client, command)
   else
     return {
-      status = "rejected",
+      accepted = false,
       reason = "Action '" .. action .. "' is not defined.",
     }
   end
@@ -411,13 +417,7 @@ server.listen {
           if message then
             local result = handle_request (ws, message)
             local answer = json.encode (result)
-            if result.status == "accepted" and result.action == "add-patch" then
-              logger:debug ("Message is successfully handled. Sending answer to all clients...")
-              for client in pairs (clients) do
-                logger:debug ("  Sending to " .. tostring (client) .. "...")
-                client:send (answer)
-              end
-            elseif result.status == "accepted" then
+            if result.accepted then
               logger:debug ("Message is successfully handled. Sending answer to the client...")
               ws:send (answer)
             else
