@@ -11,6 +11,21 @@ if not ok then
    print('Cannot connect: ', err)
 end
 
+client:send "abcde"
+client:send (json.encode {
+  action = "set-token",
+  token  = "my-token",
+  ["can-read" ] = true,
+  ["can-write"] = false,
+})
+print (client:receive())
+client:close ()
+
+
+local ok, err = client:connect('ws://localhost:8080', 'cosy')
+if not ok then
+   print('Cannot connect: ', err)
+end
 client:send "my-token"
 
 client:send (json.encode {

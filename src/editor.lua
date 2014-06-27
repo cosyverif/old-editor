@@ -47,7 +47,7 @@ if not args then
 end
 
 local directory    = args.directory
-local token        = args.token
+local admin_token  = args.token
 local port         = args.p
 local safe_mode    = args.s
 local timeout      = tonumber (args.t) -- seconds
@@ -60,13 +60,14 @@ else
 end
 
 logger:info ("Data directory is '" .. directory .. "'.")
-logger:info ("Administration token is '" .. token .. "'.")
+logger:info ("Administration token is '" .. admin_token .. "'.")
 logger:info ("Timeout is set to " .. tostring (timeout) .. " seconds.")
 logger:info ("Safe mode is " .. (safe_mode and "on" or "off") .. ".")
 
 local data_file         = directory .. "/model.lua"
 local version_file      = directory .. "/model.version"
 local patches_directory = directory .. "/patches/"
+local tokens  = {}
 local clients = {}
 local patches = {}
 local timestamp_suffix = 1
@@ -75,6 +76,12 @@ local latest_timestamp = nil
 local ADMIN_ACCESS = {}
 local WRITE_ACCESS = {}
 local READ_ACCESS  = {}
+
+tokens [admin_token] = {
+  [ADMIN_ACCESS] = true,
+  [WRITE_ACCESS] = nil,
+  [READ_ACCESS ] = nil,
+}
 
 local function is_empty (t)
   return pairs (t) (t, nil) == nil
@@ -184,122 +191,206 @@ local function init ()
   timer:arm (timeout)
 end
 
-local function handle_request (message)
+local handlers = {}
+
+handlers ["get-model"] = function (client, command)
+  local access = tokens [clients [client] . token]
+  if not access or not access [READ_ACCESS] then
+    return {
+      status = "rejected",
+      reason = "User does not have 'read' permission.",
+    }
+  end
+  return {
+    status = "accepted",
+    data = serpent.dump (cosy.model),
+  }
+end
+
+handlers ["list-patches"] = function (client, command)
+  local access = tokens [clients [client] . token]
+  if not access or not access [READ_ACCESS] then
+    return {
+      status = "rejected",
+      reason = "User does not have 'read' permission.",
+    }
+  end
+  local from = command.from
+  local to   = command.to
+  local extracted = {}
+  if not from and not to then
+    extracted = patches
+  else
+    for _, i in ipairs (patches) do
+      if (not from or from <= i) and (not to or i <= to) then
+        extracted [#extracted + 1] = { id = i }
+      end
+    end
+  end
+  return {
+    status  = "accepted",
+    patches = extracted,
+  }
+end
+
+handlers ["get-patches"] = function (client, command)
+  local access = tokens [clients [client] . token]
+  if not access or not access [READ_ACCESS] then
+    return {
+      status = "rejected",
+      reason = "User does not have 'read' permission.",
+    }
+  end
+  local id   = command.id
+  local from = command.from
+  local to   = command.to
+  local extracted = {}
+  if id and (from or to) then
+    return {
+      status = "rejected",
+      reason = "Command 'get-patches' requires 'id' or ('from'? and 'to'?).",
+    }
+  elseif id then
+    if lfs.attributes (patches_directory .. id .. ".lua") then
+      extracted [1] = {
+        id = id,
+        data = read_file (patches_directory .. id .. ".lua"),
+      }
+    else
+      return {
+        status = "rejected",
+        reason = "Patch '" .. id .. "' does not exist.",
+      }
+    end
+  else
+    for _, i in ipairs (patches) do
+      if (not from or from <= i) and (not to or i <= to) then
+        extracted [#extracted + 1] = {
+          id = i,
+          data = read_file (patches_directory .. i .. ".lua"),
+        }
+      end
+    end
+  end
+  return {
+    status = "accepted",
+    patches = extracted,
+  }
+end
+
+handlers ["add-patch"] = function (client, command)
+  local access = tokens [clients [client] . token]
+  if not access or not access [WRITE_ACCESS] then
+    return {
+      status = "rejected",
+      reason = "User does not have 'write' permission.",
+    }
+  end
+  local origin = command.origin
+  if not origin then
+    return {
+      status = "rejected",
+      reason = "Command has no 'origin' key.",
+    }
+  end
+  local patch_str = command.data
+  if not patch_str then
+    return {
+      status = "rejected",
+      reason = "Command has no 'data' key containing the patch.",
+    }
+  end
+  local s, err = pcall (function () loadstring (patch_str) () end)
+  if s then
+    local timestamp = os.time ()
+    if timestamp == latest_timestamp then
+      timestamp_suffix = timestamp_suffix + 1
+    else
+      timestamp_suffix = 1
+      latest_timestamp = timestamp
+    end
+    local id = tostring (timestamp) .. "-" .. string.format ("%09d", timestamp_suffix)
+    patches [#patches + 1] = id
+    patch_str = "-- " .. os.date ("Created on %A %d %B %Y, at %X", timestamp) ..
+                ", from origin '" .. origin .. "'.\n" ..
+                patch_str
+    write_file (patches_directory .. id .. ".lua", patch_str)
+    if safe_mode then
+      write_file (data_file, serpent.dump (cosy.model))
+      write_file (version_file, patches [#patches])
+    end
+    return {
+      status  = "accepted",
+      action  = command.action,
+      origin  = origin,
+      id      = id,
+      patches = { { id = id, data = patch_str } },
+    }
+  else
+    return {
+      status = "rejected",
+      reason = "Error while loading patch: " .. err .. ".",
+    }
+  end
+end
+
+handlers ["set-token"] = function (client, command)
+  local access = tokens [clients [client] . token]
+  if not access or not access [ADMIN_ACCESS] then
+    return {
+      status = "rejected",
+      reason = "Command 'set-user' is restricted to administrator.",
+    }
+  end
+  local token = command.token
+  if not token then
+    return {
+      status = "rejected",
+      reason = "Command 'set-user' requires a 'token'.",
+    }
+  end
+  tokens [token] = {
+    [WRITE_ACCESS] = command ["can-write"],
+    [READ_ACCESS ] = command ["can-read" ],
+    [ADMIN_ACCESS] = nil,
+  }
+  return {
+    status = "accepted",
+  }
+end
+
+local function handle_request (client, message)
   local result = {}
   -- Extract command and data:
   local command, _, err = json.decode (message)
   if err then
-    result.status = "rejected"
-    result.reason = "Command is not valid JSON: " .. err .. "."
-    return result
+    return {
+      status = "rejected",
+      reason = "Command is not valid JSON: " .. err .. ".",
+    }
   end
   if not command then
-    result.status = "rejected"
-    result.reason = "Command is empty."
-    return result
+    return {
+      status = "rejected",
+      reason = "Command is empty.",
+    }
   end
   -- Extract action:
   local action = command.action:lower ()
   if not action then
-    result.status = "rejected"
-    result.reason = "Command has no 'action' key."
-    return result
+    return {
+      status = "rejected",
+      reason = "Command has no 'action' key.",
+    }
   end
-  -- Perform command:
-  if     action == "get-model" then
-    result.status = "accepted"
-    result.data = serpent.dump (cosy.model)
-  elseif action == "list-patches" then
-    result.status = "accepted"
-    local from = command.from
-    local to   = command.to
-    if not from and not to then
-      result.patches = patches
-    else
-      local extracted = {}
-      for _, i in ipairs (patches) do
-        if (not from or from <= i) and (not to or i <= to) then
-          extracted [#extracted + 1] = { id = i }
-        end
-      end
-      result.patches = extracted
-    end
-  elseif action == "get-patches" then
-    local id   = command.id
-    local from = command.from
-    local to   = command.to
-    if id and (from or to) then
-      result.status = "rejected"
-      result.reason = "Command 'get-patches' requires 'id' or ('from'? and 'to'?)."
-      return result
-    elseif id then
-      if lfs.attributes (patches_directory .. id .. ".lua") then
-        result.status = "accepted"
-        result.patches = { [id] = read_file (patches_directory .. id .. ".lua") }
-      else
-        result.status = "rejected"
-        result.reason = "Patch '" .. id .. "' does not exist."
-      end
-    else
-      local extracted = {}
-      for _, i in ipairs (patches) do
-        if (not from or from <= i) and (not to or i <= to) then
-          extracted [#extracted + 1] = {
-            id = i,
-            data = read_file (patches_directory .. i .. ".lua"),
-          }
-        end
-      end
-      result.status = "accepted"
-      result.patches = extracted
-    end
-  elseif action == "add-patch" then
-    local origin = command.origin
-    if not origin then
-      result.status = "rejected"
-      result.reason = "Command has no 'origin' key."
-      return result
-    end
-    local patch_str = command.data
-    if not patch_str then
-      result.status = "rejected"
-      result.reason = "Command has no 'data' key containing the patch."
-      return result
-    end
-    result.action = "add-patch"
-    result.origin = origin
-    local s, err = pcall (function () loadstring (patch_str) () end)
-    if s then
-      result.status  = "accepted"
-      local timestamp = os.time ()
-      if timestamp == latest_timestamp then
-        timestamp_suffix = timestamp_suffix + 1
-      else
-        timestamp_suffix = 1
-      end
-      latest_timestamp = timestamp
-      local id = tostring (timestamp) .. "-" .. string.format ("%09d", timestamp_suffix)
-      result.patches = { { id = id, data = patch_str } }
-      patches [#patches + 1] = id
-      patch_str = "-- " .. os.date ("Created on %A %d %B %Y, at %X", timestamp) ..
-                  ", from origin '" .. origin .. "'.\n" ..
-                  patch_str
-      write_file (patches_directory .. id .. ".lua", patch_str)
-      if safe_mode then
-        write_file (data_file, serpent.dump (cosy.model))
-        write_file (version_file, patches [#patches])
-      end
-    else
-      result.status = "rejected"
-      result.reason = "Error while loading patch: " .. err .. "."
-    end
-  elseif action == "set-user" then
-    -- TODO
+  if handlers [action] then
+    return handlers [action] (client, command)
   else
-    result.status = "rejected"
-    result.reason = "Action '" .. action .. "' is not defined."
+    return {
+      status = "rejected",
+      reason = "Action '" .. action .. "' is not defined.",
+    }
   end
-  return result
 end
 
 server.listen {
@@ -312,26 +403,26 @@ server.listen {
       local auth_message = ws:receive ()
       if auth_message then
         auth_message = auth_message:match'^%s*(.*%S)'
-        if auth_message == token then
-          clients [ws] [ADMIN_ACCESS] = true
-        else
-          clients [ws] [WRITE_ACCESS] = true -- TODO: fix
-          clients [ws] [READ_ACCESS ] = true -- TODO: fix
-        end
+        clients [ws] = {
+          token = auth_message
+        }
         while true do
           local message = ws:receive()
           if message then
-            local result = handle_request (message)
-            if result.status == "accepted" then
+            local result = handle_request (ws, message)
+            local answer = json.encode (result)
+            if result.status == "accepted" and result.action == "add-patch" then
               logger:debug ("Message is successfully handled. Sending answer to all clients...")
-              local answer = json.encode (result)
               for client in pairs (clients) do
                 logger:debug ("  Sending to " .. tostring (client) .. "...")
                 client:send (answer)
               end
+            elseif result.status == "accepted" then
+              logger:debug ("Message is successfully handled. Sending answer to the client...")
+              ws:send (answer)
             else
               logger:debug ("Message cannot be handled. Sending error to its source client...")
-              ws:send (result)
+              ws:send (answer)
             end
           else
             break
