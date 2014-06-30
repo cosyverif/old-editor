@@ -21,6 +21,7 @@ install:
   - luarocks install serpent
   - luarocks install luafilesystem
   - luarocks install dkjson
+  - luarocks install lualogging
   - luarocks build rocks/lpack-master-1.rockspec
   - luarocks build rocks/lua-websockets-master-1.rockspec
   - export $(luarocks path | tr "'" ";")
