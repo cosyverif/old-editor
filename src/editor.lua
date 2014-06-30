@@ -79,8 +79,8 @@ local READ_ACCESS  = {}
 
 tokens [admin_token] = {
   [ADMIN_ACCESS] = true,
-  [WRITE_ACCESS] = nil,
-  [READ_ACCESS ] = nil,
+  [WRITE_ACCESS] = true,
+  [READ_ACCESS ] = true,
 }
 
 local function is_empty (t)
