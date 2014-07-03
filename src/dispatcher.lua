@@ -5,12 +5,9 @@ logging.console = require "logging.console"
 local logger = logging.console "%level %message\n"
 
 local ev        = require "ev"
-local copas     = require "copas.timer"
-local server    = require "websocket" . server . ev
 local json      = require "dkjson"
 local cli       = require "cliargs"
 local websocket = require "websocket"
-local client    = websocket.client.sync { timeout = 2 }
 
 cli:set_name ("dispatcher.lua")
 cli:add_argument(
@@ -44,11 +41,43 @@ end
 
 logger:info ("Administration token is '" .. admin_token .. "'.")
 
-local clients = {}
-local servers = {}
-
-
+local editors = {}
 local handlers = {}
+
+local function from_client (client, message)
+  local command, _, err = json.decode (message)
+  if err then
+    client:send (json.encode {
+      accepted = false,
+      reason = "Command is not valid JSON: " .. err .. ".",
+    })
+    return
+  end
+  if not command then
+    client:send (json.encode {
+      accepted = false,
+      reason = "Command is empty.",
+    })
+    return
+  end
+  local handler = handlers [command.action]
+  if handler then
+    handler (client, command)
+  else
+    if client.editor then
+      client.editor:send (message)
+    else
+      client:send (json.encode {
+        accepted = false,
+        reason = "Unknown command and no active editor.",
+      })
+    end
+  end
+end
+
+local function from_editor (client, message)
+  client:send (message)
+end
 
 handlers ["set-editor"] = function (client, command)
   if command.token ~= admin_token then
@@ -58,87 +87,56 @@ handlers ["set-editor"] = function (client, command)
     })
     return
   end
-  servers [command.resource] = command.url
+  editors [command.resource] = command.url
+  logger:info ("Resource " .. tostring (command.resource) ..
+               " is now mapped to " .. tostring (command.url) .. ".")
   client:send (json.encode {
     accepted = true,
   })
 end
 
 handlers ["set-resource"] = function (client, command)
-  local ws = clients [client]
-  if ws then
-    ws:close()
+  if client.editor then
+    client.editor:close()
   end
-  local target = websocket.client.sync { timeout = 2 }
-  local ok, err = target:connect (url, 'cosy')
-  if not ok then
+  client.editor = websocket.client.ev { timeout = 2 }
+  client.editor:on_open (function ()
+    client:send (json.encode {
+      accepted = true,
+    })
+  end)
+  client.editor:on_error (function (_, err)
+    client.editor = nil
     client:send (json.encode {
       accepted = false,
-      reason = "Unable to connect to resource server: " .. err .. ".",
+      reason = "Unable to connect to resource server: " .. tostring (err) .. ".",
     })
-    return
-  end
-  clients [client] = target
-  client:send (json.encode {
-    accepted = true,
-  })
-  target:on_message (function (_, message)
-    handle_target (client, message)
   end)
+  client.editor:on_message (function (_, message)
+    from_editor (client, message)
+  end)
+  client.editor:on_close (function ()
+    client.editor:close ()
+    client.editor = nil
+  end)
+  local url = editors [command.resource]
+  client.editor:connect (url, 'cosy')
 end
 
-local function handle_source (client, message)
-  local editor = clients [client]
-  if editor then
-    editor:send (message)
-  else
-    local command, _, err = json.decode (message)
-    if err then
-      client:send (json.encode {
-        accepted = false,
-        reason = "Command is not valid JSON: " .. err .. ".",
-      })
-      return
-    end
-    if not command then
-      client:send (json.encode {
-        accepted = false,
-        reason = "Command is empty.",
-      })
-      return
-    end
-    local handler = handlers [command.action]
-    if not handler then
-      client:send (json.encode {
-        accepted = false,
-        reason = "Unknown action",
-      })
-      return
-    end
-    handler (client, command)
-  end
-end
-
-local function handle_target (client, message)
-  client:send (message)
-end
-
-server.listen {
+websocket.server.ev.listen {
   port = port,
   protocols = {
-    ["cosy"] = function (ws)
-      logger:info ("Client " .. tostring (ws) .. " is connecting...")
-      ws:on_message (function (_, message)
-        handle_source (ws, message)
+    ["cosy"] = function (client)
+      logger:info ("Client " .. tostring (client) .. " is connecting...")
+      client:on_message (function (_, message)
+        from_client (client, message)
       end)
-      ws:on_close (function ()
-        local target = clients [ws]
-        if target  then
-          target:close ()
-          clients [ws] = nil
+      client:on_close (function ()
+        if client.editor then
+          client.editor:close()
         end
-        logger:info ("Client " .. tostring (ws) .. " has disconnected.")
-        ws:close ()
+        client:close ()
+        logger:info ("Client " .. tostring (client) .. " has disconnected.")
       end)
     end,
   }
@@ -146,4 +144,4 @@ server.listen {
 
 logger:info ("Listening on port " .. tostring (port) .. ".")
 logger:info "Entering main loop..."
-ev.Loop.default:loop()
+ev.Loop.default:loop ()

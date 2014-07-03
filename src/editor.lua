@@ -1,17 +1,19 @@
 #! /usr/bin/env lua
 
-cosy = {}
+local cosy = {}
+local global = _ENV or _G
+global.cosy = cosy
 
 local logging   = require "logging"
 logging.console = require "logging.console"
 local logger = logging.console "%level %message\n"
 
-local copas   = require "copas.timer"
-local server  = require "websocket" . server . copas
-local json    = require "dkjson"
-local serpent = require "serpent"
-local lfs     = require "lfs"
-local cli     = require "cliargs"
+local ev        = require "ev"
+local websocket = require "websocket"
+local json      = require "dkjson"
+local serpent   = require "serpent"
+local lfs       = require "lfs"
+local cli       = require "cliargs"
 
 cli:set_name ("editor.lua")
 cli:add_argument(
@@ -68,8 +70,8 @@ local data_file         = directory .. "/model.lua"
 local version_file      = directory .. "/model.version"
 local patches_directory = directory .. "/patches/"
 local tokens  = {}
-local clients = {}
 local patches = {}
+local clients = {}
 local timestamp_suffix = 1
 local latest_timestamp = nil
 
@@ -110,29 +112,6 @@ local function write_file (file, s)
   f:write (s.. "\n")
   f:close ()
 end
-
-local timer = copas.newtimer (
-  nil,
-  function ()
-    if is_empty (clients) then
-      logger:info ("The timeout (" .. timeout .. "s) elapsed since the last client quit.")
-      if safe_mode then
-        logger:info "Running in safe mode. Data has already been dumped."
-      elseif #patches ~= 0 then
-        logger:info ("Dumping data file in '" .. data_file .. "'...")
-        write_file (data_file, serpent.dump (cosy.model)) -- TODO: fix
-        local version = patches [#patches]
-        logger:info ("Dumping data version '" .. version .. "' in '" .. version_file .. "'...")
-        write_file (version_file, version)
-      end
-      logger:info "Bye."
-      os.exit (0)
-    end
-  end,
-  nil,
-  false,
-  nil
-)
 
 local function init ()
   logger:info "Initializing the data..."
@@ -188,32 +167,33 @@ local function init ()
   end
   write_file (version_file, patch)
   logger:info "End of initialization."
-  timer:arm (timeout)
 end
 
 local handlers = {}
 
 handlers ["get-model"] = function (client, command)
-  local access = tokens [clients [client] . token]
+  local access = tokens [command.token]
   if not access or not access [READ_ACCESS] then
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "User does not have 'read' permission.",
-    }
+    })
+    return
   end
-  return {
+  client:send (json.encode {
     accepted = true,
     data = serpent.dump (cosy.model),
-  }
+  })
 end
 
 handlers ["list-patches"] = function (client, command)
-  local access = tokens [clients [client] . token]
+  local access = tokens [command.token]
   if not access or not access [READ_ACCESS] then
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "User does not have 'read' permission.",
-    }
+    })
+    return
   end
   local from = command.from
   local to   = command.to
@@ -223,29 +203,31 @@ handlers ["list-patches"] = function (client, command)
       extracted [#extracted + 1] = { id = i }
     end
   end
-  return {
+  client:send (json.encode {
     accepted = true,
     patches  = extracted,
-  }
+  })
 end
 
 handlers ["get-patches"] = function (client, command)
-  local access = tokens [clients [client] . token]
+  local access = tokens [command.token]
   if not access or not access [READ_ACCESS] then
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "User does not have 'read' permission.",
-    }
+    })
+    return
   end
   local id   = command.id
   local from = command.from
   local to   = command.to
   local extracted = {}
   if id and (from or to) then
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "Command 'get-patches' requires 'id' or ('from'? and 'to'?).",
-    }
+    })
+    return
   elseif id then
     if lfs.attributes (patches_directory .. id .. ".lua") then
       extracted [1] = {
@@ -253,10 +235,11 @@ handlers ["get-patches"] = function (client, command)
         data = read_file (patches_directory .. id .. ".lua"),
       }
     else
-      return {
+      client:send (json.encode {
         accepted = false,
         reason = "Patch '" .. id .. "' does not exist.",
-      }
+      })
+      return
     end
   else
     for _, i in ipairs (patches) do
@@ -268,171 +251,183 @@ handlers ["get-patches"] = function (client, command)
       end
     end
   end
-  return {
+  client:send (json.encode {
     accepted = true,
     patches = extracted,
-  }
+  })
 end
 
 handlers ["add-patch"] = function (client, command)
-  local access = tokens [clients [client] . token]
+  local access = tokens [command.token]
   if not access or not access [WRITE_ACCESS] then
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "User does not have 'write' permission.",
-    }
+    })
+    return
   end
   local origin = command.origin
   if not origin then
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "Command has no 'origin' key.",
-    }
+    })
+    return
   end
   local patch_str = command.data
   if not patch_str then
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "Command has no 'data' key containing the patch.",
-    }
+    })
+    return
   end
   local s, err = pcall (function () loadstring (patch_str) () end)
-  if s then
-    local timestamp = os.time ()
-    if timestamp == latest_timestamp then
-      timestamp_suffix = timestamp_suffix + 1
-    else
-      timestamp_suffix = 1
-      latest_timestamp = timestamp
-    end
-    local id = tostring (timestamp) .. "-" .. string.format ("%09d", timestamp_suffix)
-    patches [#patches + 1] = id
-    patch_str = "-- " .. os.date ("Created on %A %d %B %Y, at %X", timestamp) ..
-                ", from origin '" .. origin .. "'.\n" ..
-                patch_str
-    write_file (patches_directory .. id .. ".lua", patch_str)
-    if safe_mode then
-      write_file (data_file, serpent.dump (cosy.model))
-      write_file (version_file, patches [#patches])
-    end
-    local update = json.encode {
-      action  = "update",
-      patches = { { id = id, data = patch_str } },
-    }
-    for c in pairs (clients) do
-      if c ~= client then
-        logger:debug ("  Sending to " .. tostring (client) .. "...")
-        c:send (update)
-      end
-    end
-    return {
-      accepted = true,
-      action   = command.action,
-      origin   = origin,
-      id       = id,
-      patches  = { { id = id, data = patch_str } },
-    }
-  else
-    return {
+  if not s then
+    client:send (json.encode {
       accepted = false,
       reason = "Error while loading patch: " .. err .. ".",
-    }
+    })
+    return
   end
+  local timestamp = os.time ()
+  if timestamp == latest_timestamp then
+    timestamp_suffix = timestamp_suffix + 1
+  else
+    timestamp_suffix = 1
+    latest_timestamp = timestamp
+  end
+  local id = tostring (timestamp) .. "-" .. string.format ("%09d", timestamp_suffix)
+  patches [#patches + 1] = id
+  patch_str = "-- " .. os.date ("Created on %A %d %B %Y, at %X", timestamp) ..
+              ", from origin '" .. origin .. "'.\n" ..
+              patch_str
+  write_file (patches_directory .. id .. ".lua", patch_str)
+  if safe_mode then
+    write_file (data_file, serpent.dump (cosy.model))
+    write_file (version_file, patches [#patches])
+  end
+  local update = json.encode {
+    action  = "update",
+    patches = { { id = id, data = patch_str } },
+  }
+  for c in pairs (clients) do
+    if c ~= client then
+      logger:debug ("  Sending to " .. tostring (client) .. "...")
+      c:send (update)
+    end
+  end
+  client:send (json.encode {
+    accepted = true,
+    action   = command.action,
+    origin   = origin,
+    id       = id,
+    patches  = { { id = id, data = patch_str } },
+  })
+
 end
 
 handlers ["set-token"] = function (client, command)
-  local access = tokens [clients [client] . token]
+  local access = tokens [command.token]
   if not access or not access [ADMIN_ACCESS] then
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "Command 'set-user' is restricted to administrator.",
-    }
+    })
+    return
   end
-  local token = command.token
+  local token = command.for_token
   if not token then
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "Command 'set-user' requires a 'token'.",
-    }
+    })
+    return
   end
   tokens [token] = {
-    [WRITE_ACCESS] = command ["can-write"],
-    [READ_ACCESS ] = command ["can-read" ],
+    [WRITE_ACCESS] = command.can_write,
+    [READ_ACCESS ] = command.can_read,
     [ADMIN_ACCESS] = nil,
   }
-  return {
+  client:send (json.encode{
     accepted = true,
-  }
+  })
 end
 
-local function handle_request (client, message)
-  local result = {}
+local function from_client (client, message)
   -- Extract command and data:
   local command, _, err = json.decode (message)
   if err then
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "Command is not valid JSON: " .. err .. ".",
-    }
+    })
+    return
   end
   if not command then
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "Command is empty.",
-    }
+    })
+    return
   end
   -- Extract action:
   local action = command.action:lower ()
   if not action then
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "Command has no 'action' key.",
-    }
+    })
+    return
   end
   if handlers [action] then
     return handlers [action] (client, command)
   else
-    return {
+    client:send (json.encode {
       accepted = false,
       reason = "Action '" .. action .. "' is not defined.",
-    }
+    })
+    return
   end
 end
 
-server.listen {
+local timer = ev.Timer.new (
+  function ()
+    if is_empty (clients) then
+      logger:info ("The timeout (" .. timeout .. "s) elapsed since the last client quit.")
+      if safe_mode then
+        logger:info "Running in safe mode. Data has already been dumped."
+      elseif #patches ~= 0 then
+        logger:info ("Dumping data file in '" .. data_file .. "'...")
+        write_file (data_file, serpent.dump (cosy.model)) -- TODO: fix
+        local version = patches [#patches]
+        logger:info ("Dumping data version '" .. version .. "' in '" .. version_file .. "'...")
+        write_file (version_file, version)
+      end
+      logger:info "Bye."
+      os.exit (0)
+    end
+  end,
+  timeout,
+  timeout
+)
+
+websocket.server.ev.listen {
   port = port,
   protocols = {
-    ["cosy"] = function (ws)
-      logger:info ("Client " .. tostring (ws) .. " is connecting...")
-      timer:cancel ()
-      clients [ws] = {}
-      local auth_message = ws:receive ()
-      if auth_message then
-        auth_message = auth_message:match'^%s*(.*%S)'
-        clients [ws] = {
-          token = auth_message
-        }
-        while true do
-          local message = ws:receive()
-          if message then
-            local result = handle_request (ws, message)
-            local answer = json.encode (result)
-            if result.accepted then
-              logger:debug ("Message is successfully handled. Sending answer to the client...")
-              ws:send (answer)
-            else
-              logger:debug ("Message cannot be handled. Sending error to its source client...")
-              ws:send (answer)
-            end
-          else
-            break
-          end
-        end
-      end
-      logger:info ("Client " .. tostring (ws) .. " has disconnected.")
-      clients [ws] = nil
-      timer:arm (timeout)
-      ws:close()
+    ["cosy"] = function (client)
+      timer:stop (ev.Loop.default)
+      clients [client] = true
+      logger:info ("Client " .. tostring (client) .. " is connecting...")
+      client:on_message (function (_, message)
+        from_client (client, message)
+      end)
+      client:on_close (function ()
+        clients [client] = nil
+        client:close ()
+        logger:info ("Client " .. tostring (client) .. " has disconnected.")
+        timer:again (ev.Loop.default)
+      end)
     end,
   }
 }
@@ -440,4 +435,5 @@ server.listen {
 init ()
 logger:info ("Listening on port " .. tostring (port) .. ".")
 logger:info "Entering main loop..."
-copas.loop()
+timer:start (ev.Loop.default, true)
+ev.Loop.default:loop ()
