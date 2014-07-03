@@ -315,14 +315,14 @@ handlers ["add-patch"] = function (client, command)
       write_file (data_file, serpent.dump (cosy.model))
       write_file (version_file, patches [#patches])
     end
-    local update = json_encode {
+    local update = json.encode {
       action  = "update",
       patches = { { id = id, data = patch_str } },
     }
     for c in pairs (clients) do
       if c ~= client then
         logger:debug ("  Sending to " .. tostring (client) .. "...")
-        c:send (answer)
+        c:send (update)
       end
     end
     return {

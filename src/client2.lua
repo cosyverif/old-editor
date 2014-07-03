@@ -26,36 +26,32 @@ if not args then
   return
 end
 
-local directory    = args.directory
-local admin_token  = args.token
-local port         = args.p
-local safe_mode    = args.s
-local timeout      = tonumber (args.t) -- seconds
+local token        = args.token
+local url          = args.url
 local verbose_mode = args.v
 
 local client = websocket.client.sync { timeout = 2 }
 
-local ok, err = client:connect('ws://localhost:8080', 'cosy')
+local ok, err = client:connect (url, 'cosy')
 if not ok then
    print('Cannot connect: ', err)
 end
-
-client:send "abcde"
 client:send (json.encode {
-  action = "set-token",
-  token  = "my-token",
-  ["can-read" ] = true,
-  ["can-write"] = true,
+  action   = "set-editor",
+  token    = token,
+  resource = "/models/model",
+  url      = "ws://127.0.0.1:8081",
 })
 print (client:receive())
 client:close ()
 
+os.exit (1)
 
-local ok, err = client:connect('ws://localhost:8080', 'cosy')
+local ok, err = client:connect (url, 'cosy')
 if not ok then
    print('Cannot connect: ', err)
 end
-client:send "my-token"
+client:send "/models/model"
 
 client:send (json.encode {
   action = "get-model"
