@@ -1,0 +1,23 @@
+#! /bin/bash
+
+set +e
+
+cd src
+
+  # Run check on all Lua files:
+  luacheck $(find . -name "*.lua")
+  echo
+
+  # Run coverage on all test files:
+  for file in $(find . -name "*.test.lua")
+  do
+    lua -lluacov ${file}
+  done
+
+  # Run coverage analysis:
+  rm -rf ../coverage/ ../coverage.txt
+  mkdir -p ../coverage/
+  ../bin/coverage
+  rm -f luacov.stats.out luacov.report.out
+
+cd ..

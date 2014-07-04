@@ -1,0 +1,10 @@
+#! /bin/bash
+
+set -e
+
+cd src
+
+  ../bin/testing $(find . -name "*.test.lua")
+  echo
+
+cd ..

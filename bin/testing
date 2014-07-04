@@ -1,0 +1,28 @@
+#! /usr/bin/env lua
+
+local colors = require 'ansicolors'
+
+local max_size = 0
+for _, x in ipairs (arg) do
+  if #x > max_size then
+    max_size = #x
+  end
+end
+
+max_size = max_size + 4
+
+for _, x in ipairs (arg) do
+  local result = os.execute ("lua " .. x)
+  local status
+  if result then
+    status = colors("%{bright green}OK")
+  else
+    status = colors("%{bright red}Failure")
+  end
+  local line = x
+  for i = #x, max_size do
+    line = line .. " "
+  end
+  line = line .. status
+  print ("Testing " .. line)
+end

@@ -1,0 +1,27 @@
+#! /bin/bash
+
+docker.io login
+tmp=$(mktemp -d)
+container="temporary-container"
+
+for arch in amd64 # i386
+do
+  for version in testing # stable unstable
+  do
+    # Generate minimal image:
+    cp dockerfiles/cosy-editor Dockerfile
+    from="saucisson/with-minimal:${version}-${arch}"
+    name="saucisson/cosy-editor:${version}-${arch}"
+    sed -i -e "s|BASE_IMAGE|${from}|" Dockerfile
+    docker.io build --tag ${name} .
+    docker.io run --name ${container} ${name} echo
+    docker.io export ${container} | docker.io import - ${name}
+    docker.io rm ${container}
+    docker push ${name}
+    rm -f Dockerfile
+  done
+done
+
+# Clean:
+docker.io rm $(docker.io ps -a -q) 2> /dev/null
+docker.io rmi $(docker.io images | grep "^<none>" | awk "{print $3}") 2> /dev/null

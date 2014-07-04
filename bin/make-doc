@@ -1,0 +1,7 @@
+#! /bin/bash
+
+set -e
+
+rm -rf doc/
+docco --layout linear --output doc/src $(find src/ -name "*.lua" ! -name '*.test.lua')
+docco --layout linear --output doc/test $(find src/ -name "*.lua")
