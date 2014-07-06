@@ -183,7 +183,6 @@ local command = ([[
   docker.io rm ${cid}
   docker.io rmi $(docker.io images | grep "${resource}" | tr -s ' ' | cut -f 3 -d ' ')
 ]]) {
-  pid       = pid,
   cid       = cid,
   root      = root,
   directory = directory,
