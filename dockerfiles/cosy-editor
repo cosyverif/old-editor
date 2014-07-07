@@ -19,6 +19,8 @@ RUN cd /tmp && wget http://luarocks.org/releases/luarocks-${LUAROCKS_VERSION}.ta
     cd ..
 
 # Install available rocks:
+RUN luarocks install luasec
+RUN luarocks install sha1
 RUN luarocks install serpent
 RUN luarocks install luafilesystem
 RUN luarocks install dkjson
