@@ -125,10 +125,16 @@ handlers ["set-resource"] = function (client, command)
     from_editor (client, message)
   end)
   client.editor:on_close (function ()
-    client.editor:close ()
     client.editor = nil
   end)
   local url = editors [command.resource]
+  if not url then
+    client:send (json.encode {
+      accepted = false,
+      reason   = "Resource is not available.",
+    })
+    return
+  end
   client.editor:connect (url, 'cosy')
 end
 

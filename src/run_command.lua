@@ -50,10 +50,9 @@ if not c then
   os.exit (3)
 end
 
-local id = c.id
-if not c.id then
-  c.id = sha1 (tostring (os.time ()) .. "+" .. command)
-  logger:debug ("Generated missing command identifier: " .. tostring (c.id))
+if not c.request_id then
+  c.request_id = sha1 (tostring (os.time ()) .. "+" .. command)
+  logger:debug ("Generated missing command identifier: " .. tostring (c.request_id))
 end
 
 client:send (json.encode (c))
@@ -65,7 +64,7 @@ while true do
     os.exit (4)
   end
   answer = json.decode (msg)
-  if answer.answer == c.id then
+  if answer.answer == c.request_id then
     break
   end
 end
