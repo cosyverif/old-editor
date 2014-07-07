@@ -102,6 +102,7 @@ if info.url then
   local client = websocket.client.sync { timeout = 2 }
   local ok, err = client:connect(info.url, 'cosy')
   if ok then
+    print ("Editor is already running at " .. info.url .. ".")
     os.exit (0) -- editor already exists
   else
     info.url = nil
