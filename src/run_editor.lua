@@ -88,6 +88,7 @@ function string_mt:__call (parameters)
   return (self:gsub('($%b{})', function(w) return parameters[w:sub(3, -2)] or w end))
 end
 
+
 -- Try to connect to the editor:
 local info_filename = ("${root}/${resource}/info.json") {
   root     = root_directory,
@@ -209,6 +210,3 @@ local command = ([[
   resource  = resource,
 }
 execute (command)
-
-info.url = nil
-json.write (info, info_filename)
