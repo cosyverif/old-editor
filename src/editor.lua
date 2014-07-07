@@ -1,7 +1,14 @@
 #! /usr/bin/env lua
 
-local cosy = {}
+local defaults = {
+  port = 6969,
+  directory = "/home/cosyverif/resource/",
+  safe = false,
+  timeout = 300,
+}
+
 local global = _ENV or _G
+local cosy = {}
 global.cosy = cosy
 
 local logging   = require "logging"
@@ -15,28 +22,35 @@ local serpent   = require "serpent"
 local lfs       = require "lfs"
 local cli       = require "cliargs"
 
+if #(cli.required) ~= 0 or #(cli.optional) ~= 0 then
+  -- Called from another script
+  return defaults
+end
+
 cli:set_name ("editor.lua")
 cli:add_argument(
   "token",
   "identification token for the server"
 )
-cli:add_argument(
-  "directory",
-  "path to the model directory"
+cli:add_option(
+  "-d, --directory=<directory>",
+  "path to the model directory",
+  tostring (defaults.directory)
 )
 cli:add_option(
   "-p, --port=<number>",
   "port to use",
-  "8080"
+  tostring (defaults.port)
 )
-cli:add_flag(
-  "-s, --safe",
-  "dump model after each patch for safety"
+cli:add_option(
+  "-s, --safe=<boolean>",
+  "dump model after each patch for safety",
+  tostring (defaults.safe)
 )
 cli:add_option(
   "-t, --timeout=<in seconds>",
   "delay after the last connexion before shutdown",
-  "60"
+  tostring (defaults.timeout)
 )
 cli:add_flag(
   "-v, --verbose",
@@ -48,12 +62,16 @@ if not args then
   return
 end
 
+if args.configuration then
+  return defaults
+end
+
 local directory    = args.directory
 local admin_token  = args.token
-local port         = args.p
-local safe_mode    = args.s
-local timeout      = tonumber (args.t) -- seconds
-local verbose_mode = args.v
+local port         = args.port
+local safe_mode    = args.safe
+local timeout      = tonumber (args.timeout) -- seconds
+local verbose_mode = args.verbose
 
 if verbose_mode then
   logger:setLevel (logging.DEBUG)

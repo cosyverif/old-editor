@@ -4,10 +4,19 @@ local logging   = require "logging"
 logging.console = require "logging.console"
 local logger = logging.console "%level %message\n"
 
+local defaults = {
+  port = 8080,
+}
+
 local ev        = require "ev"
 local json      = require "dkjson"
 local cli       = require "cliargs"
 local websocket = require "websocket"
+
+if #(cli.required) ~= 0 or #(cli.optional) ~= 0 then
+  -- Called from another script
+  return defaults
+end
 
 cli:set_name ("dispatcher.lua")
 cli:add_argument(
@@ -17,7 +26,7 @@ cli:add_argument(
 cli:add_option(
   "-p, --port=<number>",
   "port to use",
-  "8080"
+  tostring (defaults.port)
 )
 cli:add_flag(
   "-v, --verbose",
@@ -30,8 +39,8 @@ if not args then
 end
 
 local admin_token  = args.token
-local port         = args.p
-local verbose_mode = args.v
+local port         = args.port
+local verbose_mode = args.verbose
 
 if verbose_mode then
   logger:setLevel (logging.DEBUG)
@@ -134,6 +143,7 @@ websocket.server.ev.listen {
       client:on_close (function ()
         if client.editor then
           client.editor:close()
+          client.editor = nil
         end
         client:close ()
         logger:info ("Client " .. tostring (client) .. " has disconnected.")

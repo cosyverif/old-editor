@@ -4,6 +4,45 @@ local lfs       = require "lfs"
 local json      = require "dkjson"
 local cli       = require "cliargs"
 local websocket = require "websocket"
+local sha1      = require "sha1"
+
+cli:set_name ("run_editor.lua")
+cli:add_argument (
+  "dispatcher-url",
+  "URL of the dispatcher"
+)
+cli:add_argument (
+  "root-directory",
+  "root of the Cosy files"
+)
+cli:add_argument (
+  "resource",
+  "edited resource"
+)
+cli:add_argument (
+  "dispatcher-token",
+  "administration token for the dispatcher"
+)
+cli:add_argument (
+  "editor-token",
+  "administration token for the editor"
+)
+
+local editor_defaults = require "editor"
+local args = cli:parse_args ()
+if not args then
+  cli:print_help()
+  return
+end
+
+
+local dispatcher_url    = args ["dispatcher-url"]
+local root_directory    = args ["root-directory"]
+local resource          = args ["resource"]
+local dispatcher_token  = args ["dispatcher-token"]
+local editor_token      = args ["editor-token"]
+local editor_port       = editor_defaults.port
+local editor_directory  = editor_defaults.directory
 
 function json.read (filename)
   local file = io.open (filename, "r")
@@ -44,43 +83,6 @@ function string.write (contents, filename)
   file:close ()
 end
 
-cli:set_name ("run_editor.lua")
-cli:add_argument (
-  "admin-token",
-  "administration token"
-)
-cli:add_argument (
-  "resource",
-  "edited resource"
-)
-cli:add_option (
-  "-p, --port=<NUMBER>",
-  "port used by the editor",
-  "6969"
-)
-cli:add_option (
-  "-r, --root=<DIRECTORY>",
-  "root of the Cosy files",
-  "/home/alinard/projects/cosyverif/editor/src"
-)
-cli:add_option (
-  "-d, --directory=<DIRECTORY>",
-  "remote directory",
-  "/home/cosyverif/resource/"
-)
-local args = cli:parse_args ()
-if not args then
-  cli:print_help()
-  return
-end
-
-local root        = args ["root"]
-local directory   = args ["directory"]
-local admin_token = args ["admin-token"]
-local resource    = args ["resource"]
-local port        = args ["port"]
-
--- Editor does not exist, create it:
 local string_mt = getmetatable ""
 function string_mt:__call (parameters)
   return (self:gsub('($%b{})', function(w) return parameters[w:sub(3, -2)] or w end))
@@ -88,7 +90,7 @@ end
 
 -- Try to connect to the editor:
 local info_filename = ("${root}/${resource}/info.json") {
-  root     = root,
+  root     = root_directory,
   resource = resource,
 }
 local info = json.read (info_filename)
@@ -116,21 +118,25 @@ ADD model.lua     ${directory}/model.lua
 ADD model.version ${directory}/model.version
 ADD patches       ${directory}/patches
 ]]) {
-  directory = directory,
+  directory = editor_directory,
 }
 local dockerfile = ("${root}/${resource}/Dockerfile") {
-  root     = root,
+  root     = root_directory,
   resource = resource,
 }
 docker:write (dockerfile)
 
+local tag = sha1 (resource)
+
 do
   local command = ([[
-    docker.io build --force-rm --rm --quiet --tag=${resource} ${root}/${resource}
+    docker.io build --force-rm --rm --quiet --tag=${tag} ${root}/${resource}
   ]]) {
-    root     = root,
+    root     = root_directory,
     resource = resource,
+    tag      = tag
   }
+  print (command)
   os.execute (command)
 end
 
@@ -148,15 +154,12 @@ end
 
 do
   local command = ([[
-    editor="cosy-editor --port=${port} --safe --timeout=20 ${token} ${directory}"
+    editor="cosy-editor ${token}"
     docker.io run --detach --publish ${port}  ${image} ${editor}
   ]]) {
-    port      = port,
-    token     = admin_token,
-    directory = directory,
-    image     = resource,
-    root     = root,
-    resource = resource,
+    port     = editor_port,
+    token    = editor_token,
+    image    = tag,
   }
   cid = execute (command) [1]
 end
@@ -165,7 +168,7 @@ do
   local command = ([[
     docker.io port ${cid} ${port}
   ]]) {
-    port = port,
+    port = editor_port,
     cid  = cid,
   }
   url = "ws://" .. (execute (command) [1]) .. "/"
@@ -174,14 +177,31 @@ end
 info.url = url
 json.write (info, info_filename)
 
+do
+  local client = websocket.client.sync { timeout = 2 }
+  local ok, err = client:connect(dispatcher_url, 'cosy')
+  if ok then
+    client:send (json.encode {
+      token     = dispatcher_token,
+      action    = "set-editor",
+      resource  = resource,
+      url       = info.url,
+    })
+  else
+    os.exit (2)
+  end
+end
+
 local command = ([[
+  nohup bash -c "
   rm -f ${root}/${resource}/Dockerfile
-  docker.io wait "${cid}"
+  docker.io wait '${cid}'
   docker.io cp ${cid}:${directory}/model.lua     ${root}/${resource}/
   docker.io cp ${cid}:${directory}/model.version ${root}/${resource}/
   docker.io cp ${cid}:${directory}/patches       ${root}/${resource}/
   docker.io rm ${cid}
-  docker.io rmi $(docker.io images | grep "${resource}" | tr -s ' ' | cut -f 3 -d ' ')
+  docker.io rmi $(docker.io images | grep '${resource}' | tr -s ' ' | cut -f 3 -d ' ')
+  " &
 ]]) {
   cid       = cid,
   root      = root,
