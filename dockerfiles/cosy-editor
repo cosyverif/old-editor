@@ -19,7 +19,6 @@ RUN cd /tmp && wget http://luarocks.org/releases/luarocks-${LUAROCKS_VERSION}.ta
     cd ..
 
 # Install available rocks:
-RUN luarocks install luasec
 RUN luarocks install sha1
 RUN luarocks install serpent
 RUN luarocks install luafilesystem
@@ -35,6 +34,7 @@ RUN luarocks build /tmp/rocks/lpack-master-1.rockspec
 RUN apt-get install -y libssl-dev
 ADD rocks/lua-websockets-master-1.rockspec  /tmp/rocks/lua-websockets-master-1.rockspec
 RUN luarocks build /tmp/rocks/lua-websockets-master-1.rockspec
+RUN luarocks install luasec
 
 RUN apt-get install -y libev-dev
 ADD rocks/lua-ev-master-1.rockspec          /tmp/rocks/lua-ev-master-1.rockspec
@@ -54,3 +54,4 @@ RUN rm -rf /var/cache/debconf/*
 RUN useradd --create-home -G users -d /home/cosyverif -s /bin/bash cosyverif
 USER cosyverif
 WORKDIR /home/cosyverif
+RUN mkdir -p /home/cosyverif/resource
