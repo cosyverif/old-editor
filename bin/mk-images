@@ -4,7 +4,7 @@ docker.io login
 tmp=$(mktemp -d)
 container="temporary-container"
 
-for arch in amd64 # i386
+for arch in i386 amd64
 do
   for version in testing # stable unstable
   do
