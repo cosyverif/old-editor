@@ -12,24 +12,26 @@ local sha1      = require "sha1"
 
 cli:set_name ("run_editor.lua")
 cli:add_argument (
-  "dispatcher-url",
-  "URL of the dispatcher"
-)
-cli:add_argument (
-  "root-directory",
-  "root of the Cosy files"
-)
-cli:add_argument (
   "resource",
   "edited resource"
+)
+cli:add_argument (
+  "model-directory",
+  "directory storing the model"
 )
 cli:add_argument (
   "dispatcher-token",
   "administration token for the dispatcher"
 )
-cli:add_argument (
-  "editor-token",
-  "administration token for the editor"
+cli:add_option (
+  "--editor-token=<string>",
+  "administration token for the editor",
+  "generated"
+)
+cli:add_option (
+  "--dispatcher-url=<url>",
+  "URL of the dispatcher",
+  "ws://localhost:80"
 )
 cli:add_flag(
   "-v, --verbose",
@@ -45,13 +47,21 @@ end
 
 
 local dispatcher_url    = args ["dispatcher-url"]
-local root_directory    = args ["root-directory"]
+local model_directory   = args ["model-directory"]
 local resource          = args ["resource"]
 local dispatcher_token  = args ["dispatcher-token"]
 local editor_token      = args ["editor-token"]
 local editor_port       = editor_defaults.port
 local editor_directory  = editor_defaults.directory
 local verbose_mode      = args.verbose
+
+if editor_token == "generated" then
+  editor_token = sha1 (
+    dispatcher_url .. "+" ..
+    resource       .. "+" ..
+    tostring (os.time ())
+  )
+end
 
 if verbose_mode then
   logger:setLevel (logging.DEBUG)
@@ -60,7 +70,7 @@ else
 end
 
 logger:info ("Dispatcher URL is '" .. dispatcher_url .. "'.")
-logger:info ("Root directory is '" .. root_directory .. "'.")
+logger:info ("Model directory is '" .. model_directory .. "'.")
 logger:info ("Resource is '" .. resource .. "'.")
 logger:info ("Dispatcher token is '" .. dispatcher_token .. "'.")
 logger:info ("Editor token is '" .. editor_token .. "'.")
@@ -69,6 +79,9 @@ logger:info ("Editor directory is '" .. editor_directory .. "'.")
 
 function json.read (filename)
   local file = io.open (filename, "r")
+  if not file then
+    return nil
+  end
   lfs.lock (file, "r")
   local contents = file:read ("*all")
   local result   = json.decode (contents)
@@ -82,6 +95,9 @@ end
 
 function string.read (filename)
   local file = io.open (filename, "r")
+  if not file then
+    return nil
+  end
   lfs.lock (file, "r")
   local contents = file:read ("*all")
   lfs.unlock (file)
@@ -118,13 +134,12 @@ end
 
 
 -- Try to connect to the editor:
-local info_filename = ("${root}/${resource}/info.json") {
-  root     = root_directory,
-  resource = resource,
+local info_filename = ("${directory}/info.json") {
+  directory = model_directory,
 }
 local info = json.read (info_filename)
 if not info then
-  logger:warning ("File " .. info_filename .. " does not exist.")
+  logger:warn ("File " .. info_filename .. " does not exist.")
   info = {}
 end
 if info.url then
@@ -149,20 +164,24 @@ do
 
   USER cosyverif
   RUN mkdir -p ${directory}
-  ADD model.lua     ${directory}/model.lua
+  ADD model.lua ${directory}/model.lua
   ]]) {
     directory = editor_directory,
   }
-  local model_file = ("${root}/${resource}/model.lua") {
-    root     = root_directory,
-    resource = resource,
+  local model_file = ("${directory}/model.lua") {
+    directory = model_directory,
   }
   if not lfs.attributes (model_file) then
-    string.write ("", model_file)
+    local model = ([[
+    require "cosy.lang.cosy"
+    cosy ["${resource}"] = {}
+    ]]) {
+      resource = resource,
+    }
+    string.write (model, model_file)
   end
-  local version_file = ("${root}/${resource}/model.version") {
-    root     = root_directory,
-    resource = resource,
+  local version_file = ("${directory}/model.version") {
+    directory = model_directory,
   }
   if lfs.attributes (version_file) then
   docker = docker .. ([[
@@ -171,9 +190,8 @@ do
     directory = editor_directory,
   }
   end
-  local patches_dir = ("${root}/${resource}/patches") {
-    root     = root_directory,
-    resource = resource,
+  local patches_dir = ("${directory}/patches") {
+    directory = model_directory,
   }
   if lfs.attributes (patches_dir) then
   docker = docker .. ([[
@@ -182,9 +200,8 @@ do
     directory = editor_directory,
   }
   end
-  local dockerfile = ("${root}/${resource}/Dockerfile") {
-    root     = root_directory,
-    resource = resource,
+  local dockerfile = ("${directory}/Dockerfile") {
+    directory = model_directory,
   }
   docker:write (dockerfile)
 end
@@ -192,10 +209,9 @@ end
 local tag = sha1 (resource)
 do
   local command = ([[
-    docker.io build --force-rm --rm --quiet --tag=${tag} ${root}/${resource} > /dev/null
+    docker.io build --force-rm --rm --quiet --tag=${tag} ${directory} > /dev/null
   ]]) {
-    root     = root_directory,
-    resource = resource,
+    directory = model_directory,
     tag      = tag
   }
   logger:debug (command)
@@ -216,7 +232,7 @@ end
 
 do
   local command = ([[
-    editor="cosy-editor -t 10 ${token}"
+    editor="cosy-editor ${token}"
     docker.io run --detach --publish ${port}  ${image} ${editor}
   ]]) {
     port     = editor_port,
@@ -253,35 +269,35 @@ do
     })
   else
     logger:debug (err)
-    os.exit (2)
   end
   client:close ()
 end
 
-local script_file
 do
   local command = [[
     mktemp
   ]]
   logger:debug (command)
-  script_file = execute (command) [1]
+  local script_file = execute (command) [1]
   local script = ([[
     #! /bin/bash
-    rm -f ${root}/${resource}/Dockerfile
+    rm -f ${model_directory}/Dockerfile
     docker.io wait '${cid}'
-    docker.io cp ${cid}:${directory}/model.lua     ${root}/${resource}/
-    docker.io cp ${cid}:${directory}/model.version ${root}/${resource}/
-    docker.io cp ${cid}:${directory}/patches       ${root}/${resource}/
+    docker.io cp ${cid}:${editor_directory}/model.lua     ${model_directory}/
+    docker.io cp ${cid}:${editor_directory}/model.version ${model_directory}/
+    docker.io cp ${cid}:${editor_directory}/patches       ${model_directory}/
     docker.io rm ${cid}
-    docker.io rmi $(docker.io images | grep '${resource}' | tr -s ' ' | cut -f 3 -d ' ')
+    docker.io rmi $(docker.io images | grep '${tag}' | tr -s ' ' | cut -f 3 -d ' ')
     rm -f ${script_file}
   ]]) {
-    cid         = cid,
-    root        = root_directory,
-    directory   = editor_directory,
-    resource    = resource,
-    script_file = script_file,
+    cid              = cid,
+    model_directory  = model_directory,
+    editor_directory = editor_directory,
+    script_file      = script_file,
+    tag              = tag,
   }
+  print (script)
+  print (script_file)
   string.write (script, script_file)
   command = ([[
     chmod a+x ${script_file}
@@ -290,5 +306,5 @@ do
     script_file = script_file,
   }
   logger:debug (command)
-  execute (command)
+--  execute (command)
 end
