@@ -28,17 +28,20 @@ RUN luarocks install lua_cliargs
 
 # Install remaining rocks:
 RUN apt-get install -y git
-ADD rocks/lpack-master-1.rockspec           /tmp/rocks/lpack-master-1.rockspec
+ADD rocks/lpack-master-1.rockspec /tmp/rocks/
 RUN luarocks build /tmp/rocks/lpack-master-1.rockspec
 
 RUN apt-get install -y libssl-dev
-ADD rocks/lua-websockets-master-1.rockspec  /tmp/rocks/lua-websockets-master-1.rockspec
+ADD rocks/lua-websockets-master-1.rockspec /tmp/rocks/
 RUN luarocks build /tmp/rocks/lua-websockets-master-1.rockspec
 RUN luarocks install luasec
 
 RUN apt-get install -y libev-dev
-ADD rocks/lua-ev-master-1.rockspec          /tmp/rocks/lua-ev-master-1.rockspec
+ADD rocks/lua-ev-master-1.rockspec /tmp/rocks/
 RUN luarocks build /tmp/rocks/lua-ev-master-1.rockspec
+
+ADD rocks/cosyverif-lang-master-1.rockspec /tmp/rocks/
+RUN luarocks build /tmp/rocks/cosyverif-lang-master-1.rockspec
 
 ADD src/editor.lua /usr/local/bin/cosy-editor
 
