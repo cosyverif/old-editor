@@ -340,9 +340,7 @@ handlers ["add-patch"] = function (client, command)
   client:send (json.encode {
     answer   = command.request_id,
     accepted = true,
-    action   = command.action,
     id       = id,
-    patches  = { { id = id, data = patch_str } },
   })
 
 end
