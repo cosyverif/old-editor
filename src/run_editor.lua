@@ -159,12 +159,12 @@ end
 -- Generate Dockerfile
 do
   local docker = ([[
-  FROM saucisson/cosy-editor:testing-amd64
-  MAINTAINER alban.linard@lsv.ens-cachan.fr
+FROM saucisson/cosy-editor:testing-amd64
+MAINTAINER alban.linard@lsv.ens-cachan.fr
 
-  USER cosyverif
-  RUN mkdir -p ${directory}
-  ADD model.lua ${directory}/model.lua
+USER cosyverif
+RUN mkdir -p ${directory}
+ADD model.lua ${directory}/model.lua
   ]]) {
     directory = editor_directory,
   }
@@ -173,8 +173,8 @@ do
   }
   if not lfs.attributes (model_file) then
     local model = ([[
-    require "cosy.lang.cosy"
-    cosy ["${resource}"] = {}
+require "cosy.lang.cosy"
+cosy ["${resource}"] = {}
     ]]) {
       resource = resource,
     }
@@ -185,7 +185,7 @@ do
   }
   if lfs.attributes (version_file) then
   docker = docker .. ([[
-  ADD model.version ${directory}/model.version
+ADD model.version ${directory}/model.version
   ]]) {
     directory = editor_directory,
   }
@@ -195,7 +195,7 @@ do
   }
   if lfs.attributes (patches_dir) then
   docker = docker .. ([[
-  ADD patches       ${directory}/patches
+ADD patches       ${directory}/patches
   ]]) {
     directory = editor_directory,
   }
@@ -209,7 +209,7 @@ end
 local tag = sha1 (resource)
 do
   local command = ([[
-    docker.io build --force-rm --rm --quiet --tag=${tag} ${directory} > /dev/null
+docker.io build --force-rm --rm --quiet --tag=${tag} ${directory} > /dev/null
   ]]) {
     directory = model_directory,
     tag      = tag
@@ -232,8 +232,8 @@ end
 
 do
   local command = ([[
-    editor="cosy-editor ${token}"
-    docker.io run --detach --publish ${port}  ${image} ${editor}
+editor="cosy-editor ${token}"
+docker.io run --detach --publish ${port}  ${image} ${editor}
   ]]) {
     port     = editor_port,
     token    = editor_token,
@@ -245,7 +245,7 @@ end
 
 do
   local command = ([[
-    docker.io port ${cid} ${port}
+docker.io port ${cid} ${port}
   ]]) {
     port = editor_port, 
     cid  = cid,
@@ -280,15 +280,15 @@ do
   logger:debug (command)
   local script_file = execute (command) [1]
   local script = ([[
-    #! /bin/bash
-    rm -f ${model_directory}/Dockerfile
-    docker.io wait '${cid}'
-    docker.io cp ${cid}:${editor_directory}/model.lua     ${model_directory}/
-    docker.io cp ${cid}:${editor_directory}/model.version ${model_directory}/
-    docker.io cp ${cid}:${editor_directory}/patches       ${model_directory}/
-    docker.io rm ${cid}
-    docker.io rmi $(docker.io images | grep '${tag}' | tr -s ' ' | cut -f 3 -d ' ')
-    rm -f ${script_file}
+#! /bin/bash
+rm -f ${model_directory}/Dockerfile
+docker.io wait '${cid}'
+docker.io cp ${cid}:${editor_directory}/model.lua     ${model_directory}/
+docker.io cp ${cid}:${editor_directory}/model.version ${model_directory}/
+docker.io cp ${cid}:${editor_directory}/patches       ${model_directory}/
+docker.io rm ${cid}
+docker.io rmi $(docker.io images | grep '${tag}' | tr -s ' ' | cut -f 3 -d ' ')
+rm -f ${script_file}
   ]]) {
     cid              = cid,
     model_directory  = model_directory,
@@ -300,8 +300,8 @@ do
   print (script_file)
   string.write (script, script_file)
   command = ([[
-    chmod a+x ${script_file}
-    bash -c "nohup ${script_file} > /dev/null 2>&1 &"
+chmod a+x ${script_file}
+bash -c "nohup ${script_file} > /dev/null 2>&1 &"
   ]]) {
     script_file = script_file,
   }
