@@ -158,6 +158,26 @@ end
 
 -- Generate Dockerfile
 do
+  local model_file = ("${directory}/model.lua") {
+    directory = model_directory,
+  }
+  if not lfs.attributes (model_file) then
+    local model = ([[
+cosy [ '${resource}' ] = {}
+    ]]) {
+      resource = resource,
+    }
+    model:write (model_file)
+  end
+  local patches_dir = ("${directory}/patches") {
+    directory = model_directory,
+  }
+  if not lfs.attributes (patches_dir) then
+    lfs.mkdir (patches_dir)
+  end
+  local dockerfile = ("${directory}/Dockerfile") {
+    directory = model_directory,
+  }
   local docker = ([[
 FROM saucisson/cosy-editor:testing-amd64
 MAINTAINER alban.linard@lsv.ens-cachan.fr
@@ -165,43 +185,9 @@ MAINTAINER alban.linard@lsv.ens-cachan.fr
 USER cosyverif
 RUN mkdir -p ${directory}
 ADD model.lua ${directory}/model.lua
-  ]]) {
+ADD patches   ${directory}/patches
+  ]]) { -- ADD model.lua ${directory}/model.lua
     directory = editor_directory,
-  }
-  local model_file = ("${directory}/model.lua") {
-    directory = model_directory,
-  }
-  if not lfs.attributes (model_file) then
-    local model = ([[
-require "cosy.lang.cosy"
-cosy ["${resource}"] = {}
-    ]]) {
-      resource = resource,
-    }
-    string.write (model, model_file)
-  end
-  local version_file = ("${directory}/model.version") {
-    directory = model_directory,
-  }
-  if lfs.attributes (version_file) then
-  docker = docker .. ([[
-ADD model.version ${directory}/model.version
-  ]]) {
-    directory = editor_directory,
-  }
-  end
-  local patches_dir = ("${directory}/patches") {
-    directory = model_directory,
-  }
-  if lfs.attributes (patches_dir) then
-  docker = docker .. ([[
-ADD patches       ${directory}/patches
-  ]]) {
-    directory = editor_directory,
-  }
-  end
-  local dockerfile = ("${directory}/Dockerfile") {
-    directory = model_directory,
   }
   docker:write (dockerfile)
 end
@@ -232,11 +218,12 @@ end
 
 do
   local command = ([[
-editor="cosy-editor ${token}"
+editor="cosy-editor ${token} ${resource}"
 docker.io run --detach --publish ${port}  ${image} ${editor}
   ]]) {
     port     = editor_port,
     token    = editor_token,
+    resource = resource,
     image    = tag,
   }
   logger:debug (command)
