@@ -28,12 +28,12 @@ end
 
 cli:set_name ("editor.lua")
 cli:add_argument(
-  "token",
-  "identification token for the server"
+  "resource",
+  "resource to edit"
 )
 cli:add_argument(
-  "resource",
-  "resource URL"
+  "token",
+  "identification token for the server"
 )
 cli:add_option(
   "-d, --directory=<directory>",
@@ -292,6 +292,7 @@ handlers ["add-patch"] = function (client, command)
     })
     return
   end
+  logger:debug ("Asked to add patch: '" .. patch_str .. "'.")
   local s, err = pcall (function () loadstring (patch_str) () end)
   if not s then
     logger:warn ("Cannot apply patch: '" .. patch_str  .. "', because: " .. err)
