@@ -218,7 +218,7 @@ end
 
 do
   local command = ([[
-editor="cosy-editor ${token} ${resource}"
+editor="cosy-editor ${resource} ${token}"
 docker.io run --detach --publish ${port}  ${image} ${editor}
   ]]) {
     port     = editor_port,
