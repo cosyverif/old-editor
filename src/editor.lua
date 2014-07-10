@@ -18,7 +18,6 @@ local logger = logging.console "%level %message\n"
 local ev        = require "ev"
 local websocket = require "websocket"
 local json      = require "dkjson"
-local serpent   = require "serpent"
 local lfs       = require "lfs"
 local cli       = require "cliargs"
 
@@ -32,6 +31,10 @@ cli:add_argument(
   "token",
   "identification token for the server"
 )
+cli:add_argument(
+  "resource",
+  "resource URL"
+)
 cli:add_option(
   "-d, --directory=<directory>",
   "path to the model directory",
@@ -41,11 +44,6 @@ cli:add_option(
   "-p, --port=<number>",
   "port to use",
   tostring (defaults.port)
-)
-cli:add_option(
-  "-s, --safe=<boolean>",
-  "dump model after each patch for safety",
-  tostring (defaults.safe)
 )
 cli:add_option(
   "-t, --timeout=<in seconds>",
@@ -66,10 +64,10 @@ if args.configuration then
   return defaults
 end
 
+local resource     = args.resource
 local directory    = args.directory
 local admin_token  = args.token
 local port         = args.port
-local safe_mode    = args.safe
 local timeout      = tonumber (args.timeout) -- seconds
 local verbose_mode = args.verbose
 
@@ -79,13 +77,13 @@ else
   logger:setLevel (logging.INFO)
 end
 
+logger:info ("Resource is '" .. resource .. "'.")
 logger:info ("Data directory is '" .. directory .. "'.")
 logger:info ("Administration token is '" .. admin_token .. "'.")
 logger:info ("Timeout is set to " .. tostring (timeout) .. " seconds.")
 logger:info ("Safe mode is " .. (safe_mode and "on" or "off") .. ".")
 
 local data_file         = directory .. "/model.lua"
-local version_file      = directory .. "/model.version"
 local patches_directory = directory .. "/patches/"
 local tokens  = {}
 local patches = {}
@@ -131,13 +129,28 @@ local function write_file (file, s)
   f:close ()
 end
 
+local function append_file (file, s)
+  logger:debug ("Appending to file '" .. tostring (file) .. "'...")
+  if not s then
+    return nil
+  end
+  local f = io.open (file, "a")
+  if not f then
+    return nil
+  end
+  f:write (s.. "\n")
+  f:close ()
+end
+
 local function init ()
   logger:info "Initializing the data..."
   -- Load the data:
   if lfs.attributes (data_file) then
     logger:info ("Loading the data from '" .. data_file .. "'...")
-    local model_str = read_file (data_file)
-    cosy.model = loadstring (model_str) () -- TODO: change
+    local ok, err = pcall (dofile, data_file)
+    if not ok then
+      logger:warn (err)
+    end
   end
   -- Create the patches directory if it does not exist:
   if not lfs.attributes (patches_directory) then
@@ -161,31 +174,6 @@ local function init ()
       logger:debug ("  " .. p)
     end
   end
-  -- Apply all patches since the model version:
---  local after
---  local latest_patch = read_file (version_file)
---  if latest_patch then
---    latest_patch = latest_patch:match'^%s*(.*%S)'
---  end
---  if latest_patch then
---    logger:info ("Data corresponds to patch '" .. latest_patch .. "'.")
---    after = false
---  else
---    logger:warn "Data corresponds to no patch."
---    after = true
---  end
-  logger:info "Updating data using patches..."
---  local patch
-  for _, patch in ipairs (patches) do
---    if after then
-      logger:debug ("  Applying patch '" .. patch .. "'.")
-      dofile (patches_directory .. patch .. ".lua")
---    end
---    if patch == latest_patch then
---      after = true
---    end
-  end
---  write_file (version_file, patch)
   logger:info "End of initialization."
 end
 
@@ -204,7 +192,7 @@ handlers ["get-model"] = function (client, command)
   client:send (json.encode {
     answer   = command.request_id,
     accepted = true,
-    data     = serpent.dump (cosy.model),
+    data     = read_file (data_file),
   })
 end
 
@@ -324,10 +312,7 @@ handlers ["add-patch"] = function (client, command)
   local id = tostring (timestamp) .. "-" .. string.format ("%09d", timestamp_suffix)
   patches [#patches + 1] = id
   write_file (patches_directory .. id .. ".lua", patch_str)
---  if safe_mode then
---    write_file (data_file, serpent.dump (cosy.model))
---    write_file (version_file, patches [#patches])
---  end
+  append_file (data_file, patch_str)
   local update = json.encode {
     action  = "update",
     patches = { { id = id, data = patch_str } },
@@ -419,17 +404,8 @@ local timer = ev.Timer.new (
   function ()
     if is_empty (clients) then
       logger:info ("The timeout (" .. timeout .. "s) elapsed since the last client quit.")
-      if safe_mode then
-        logger:info "Running in safe mode. Data has already been dumped."
-      elseif #patches ~= 0 then
-        logger:info ("Dumping data file in '" .. data_file .. "'...")
-        write_file (data_file, serpent.dump (cosy.model)) -- TODO: fix
-        local version = patches [#patches]
-        logger:info ("Dumping data version '" .. version .. "' in '" .. version_file .. "'...")
-        write_file (version_file, version)
-      end
       logger:info "Bye."
-      os.exit (0)
+      ev.Loop.default:unloop ()
     end
   end,
   timeout,
