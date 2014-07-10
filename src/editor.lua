@@ -162,30 +162,30 @@ local function init ()
     end
   end
   -- Apply all patches since the model version:
-  local after
-  local latest_patch = read_file (version_file)
-  if latest_patch then
-    latest_patch = latest_patch:match'^%s*(.*%S)'
-  end
-  if latest_patch then
-    logger:info ("Data corresponds to patch '" .. latest_patch .. "'.")
-    after = false
-  else
-    logger:warn "Data corresponds to no patch."
-    after = true
-  end
+--  local after
+--  local latest_patch = read_file (version_file)
+--  if latest_patch then
+--    latest_patch = latest_patch:match'^%s*(.*%S)'
+--  end
+--  if latest_patch then
+--    logger:info ("Data corresponds to patch '" .. latest_patch .. "'.")
+--    after = false
+--  else
+--    logger:warn "Data corresponds to no patch."
+--    after = true
+--  end
   logger:info "Updating data using patches..."
-  local patch
+--  local patch
   for _, patch in ipairs (patches) do
-    if after then
+--    if after then
       logger:debug ("  Applying patch '" .. patch .. "'.")
       dofile (patches_directory .. patch .. ".lua")
-    end
-    if patch == latest_patch then
-      after = true
-    end
+--    end
+--    if patch == latest_patch then
+--      after = true
+--    end
   end
-  write_file (version_file, patch)
+--  write_file (version_file, patch)
   logger:info "End of initialization."
 end
 
@@ -306,6 +306,7 @@ handlers ["add-patch"] = function (client, command)
   end
   local s, err = pcall (function () loadstring (patch_str) () end)
   if not s then
+    logger:warn ("Cannot apply patch: '" .. patch_str  .. "', because: " .. err)
     client:send (json.encode {
       answer   = command.request_id,
       accepted = false,
@@ -323,10 +324,10 @@ handlers ["add-patch"] = function (client, command)
   local id = tostring (timestamp) .. "-" .. string.format ("%09d", timestamp_suffix)
   patches [#patches + 1] = id
   write_file (patches_directory .. id .. ".lua", patch_str)
-  if safe_mode then
-    write_file (data_file, serpent.dump (cosy.model))
-    write_file (version_file, patches [#patches])
-  end
+--  if safe_mode then
+--    write_file (data_file, serpent.dump (cosy.model))
+--    write_file (version_file, patches [#patches])
+--  end
   local update = json.encode {
     action  = "update",
     patches = { { id = id, data = patch_str } },
