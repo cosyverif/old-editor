@@ -183,6 +183,7 @@ handlers ["get-model"] = function (client, command)
   local access = tokens [command.token]
   if not access or not access [READ_ACCESS] then
     client:send (json.encode {
+      action   = command.action,
       answer   = command.request_id,
       accepted = false,
       reason   = "User does not have 'read' permission.",
@@ -190,9 +191,11 @@ handlers ["get-model"] = function (client, command)
     return
   end
   client:send (json.encode {
+    action   = command.action,
     answer   = command.request_id,
     accepted = true,
-    data     = read_file (data_file),
+    code     = read_file (data_file),
+    version  = patches [#patches],
   })
 end
 
@@ -200,6 +203,7 @@ handlers ["list-patches"] = function (client, command)
   local access = tokens [command.token]
   if not access or not access [READ_ACCESS] then
     client:send (json.encode {
+      action   = command.action,
       answer   = command.request_id,
       accepted = false,
       reason   = "User does not have 'read' permission.",
@@ -215,6 +219,7 @@ handlers ["list-patches"] = function (client, command)
     end
   end
   client:send (json.encode {
+    action   = command.action,
     answer   = command.request_id,
     accepted = true,
     patches  = extracted,
@@ -225,6 +230,7 @@ handlers ["get-patches"] = function (client, command)
   local access = tokens [command.token]
   if not access or not access [READ_ACCESS] then
     client:send (json.encode {
+      action   = command.action,
       answer   = command.request_id,
       accepted = false,
       reason   = "User does not have 'read' permission.",
@@ -237,6 +243,7 @@ handlers ["get-patches"] = function (client, command)
   local extracted = {}
   if id and (from or to) then
     client:send (json.encode {
+      action   = command.action,
       answer   = command.request_id,
       accepted = false,
       reason   = "Command 'get-patches' requires 'id' or ('from'? and 'to'?).",
@@ -250,6 +257,7 @@ handlers ["get-patches"] = function (client, command)
       }
     else
       client:send (json.encode {
+        action   = command.action,
         answer   = command.request_id,
         accepted = false,
         reason   = "Patch '" .. id .. "' does not exist.",
@@ -261,12 +269,13 @@ handlers ["get-patches"] = function (client, command)
       if (not from or from <= i) and (not to or i <= to) then
         extracted [#extracted + 1] = {
           id = i,
-          data = read_file (patches_directory .. i .. ".lua"),
+          code = read_file (patches_directory .. i .. ".lua"),
         }
       end
     end
   end
   client:send (json.encode {
+    action   = command.action,
     answer   = command.request_id,
     accepted = true,
     patches  = extracted,
@@ -277,6 +286,7 @@ handlers ["add-patch"] = function (client, command)
   local access = tokens [command.token]
   if not access or not access [WRITE_ACCESS] then
     client:send (json.encode {
+      action   = command.action,
       answer   = command.request_id,
       accepted = false,
       reason   = "User does not have 'write' permission.",
@@ -286,6 +296,7 @@ handlers ["add-patch"] = function (client, command)
   local patch_str = command.data
   if not patch_str then
     client:send (json.encode {
+      action   = command.action,
       answer   = command.request_id,
       accepted = false,
       reason   = "Command has no 'data' key containing the patch.",
@@ -297,6 +308,7 @@ handlers ["add-patch"] = function (client, command)
   if not s then
     logger:warn ("Cannot apply patch: '" .. patch_str  .. "', because: " .. err)
     client:send (json.encode {
+      action   = command.action,
       answer   = command.request_id,
       accepted = false,
       reason   = "Error while loading patch: " .. err .. ".",
@@ -316,7 +328,8 @@ handlers ["add-patch"] = function (client, command)
   append_file (data_file, patch_str)
   local update = json.encode {
     action  = "update",
-    patches = { { id = id, data = patch_str } },
+    version = patches [#patches],
+    patches = { { id = id, code = patch_str } },
   }
   for c in pairs (clients) do
     if c ~= client then
@@ -325,9 +338,11 @@ handlers ["add-patch"] = function (client, command)
     end
   end
   client:send (json.encode {
+    action   = command.action,
     answer   = command.request_id,
     accepted = true,
     id       = id,
+    version  = patches [#patches],
   })
 
 end
@@ -336,6 +351,7 @@ handlers ["set-token"] = function (client, command)
   local access = tokens [command.token]
   if not access or not access [ADMIN_ACCESS] then
     client:send (json.encode {
+      action   = command.action,
       answer   = command.request_id,
       accepted = false,
       reason   = "Command 'set-user' is restricted to administrator.",
@@ -345,6 +361,7 @@ handlers ["set-token"] = function (client, command)
   local token = command.for_token
   if not token then
     client:send (json.encode {
+      action   = command.action,
       answer   = command.request_id,
       accepted = false,
       reason   = "Command 'set-user' requires a 'token'.",
@@ -357,6 +374,7 @@ handlers ["set-token"] = function (client, command)
     [ADMIN_ACCESS] = nil,
   }
   client:send (json.encode{
+    action   = command.action,
     answer   = command.request_id,
     accepted = true,
   })
@@ -383,6 +401,7 @@ local function from_client (client, message)
   local action = command.action:lower ()
   if not action then
     client:send (json.encode {
+      action   = command.action,
       answer   = command.request_id,
       accepted = false,
       reason   = "Command has no 'action' key.",
@@ -393,6 +412,7 @@ local function from_client (client, message)
     return handlers [action] (client, command)
   else
     client:send (json.encode {
+      action   = command.action,
       answer   = command.request_id,
       accepted = false,
       reason   = "Action '" .. action .. "' is not defined.",

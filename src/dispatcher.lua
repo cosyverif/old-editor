@@ -77,8 +77,9 @@ local function from_client (client, message)
       client.editor:send (message)
     else
       client:send (json.encode {
+        action   = command.action,
         accepted = false,
-        reason = "Unknown command and no active editor.",
+        reason   = "Unknown command and no active editor.",
       })
     end
   end
@@ -91,8 +92,9 @@ end
 handlers ["set-editor"] = function (client, command)
   if command.token ~= admin_token then
     client:send (json.encode {
+      action   = command.action,
       accepted = false,
-      reason = "Action only available to administrator.",
+      reason   = "Action only available to administrator.",
     })
     return
   end
@@ -100,6 +102,7 @@ handlers ["set-editor"] = function (client, command)
   logger:info ("Resource " .. tostring (command.resource) ..
                " is now mapped to " .. tostring (command.url) .. ".")
   client:send (json.encode {
+    action   = command.action,
     accepted = true,
   })
 end
@@ -111,14 +114,16 @@ handlers ["set-resource"] = function (client, command)
   client.editor = websocket.client.ev { timeout = 2 }
   client.editor:on_open (function ()
     client:send (json.encode {
+      action   = command.action,
       accepted = true,
     })
   end)
   client.editor:on_error (function (_, err)
     client.editor = nil
     client:send (json.encode {
+      action   = command.action,
       accepted = false,
-      reason = "Unable to connect to resource server: " .. tostring (err) .. ".",
+      reason   = "Unable to connect to resource server: " .. tostring (err) .. ".",
     })
   end)
   client.editor:on_message (function (_, message)
@@ -130,6 +135,7 @@ handlers ["set-resource"] = function (client, command)
   local url = editors [command.resource]
   if not url then
     client:send (json.encode {
+      action   = command.action,
       accepted = false,
       reason   = "Resource is not available.",
     })
