@@ -1,13 +1,13 @@
 #! /usr/bin/env lua
 
       cli        = require "cliargs"
-local dispatcher = require "dispatcher"
 local logging    = require "logging"
 logging.console  = require "logging.console"
 local logger     = logging.console "%level %message\n"
 local json       = require "dkjson"
 local websocket  = require "websocket"
-local _          = require "util/string"
+local _          = require "cosy.util/string"
+local dispatcher = require "cosy.dispatcher"
 
 cli:set_name ("client.lua")
 cli:add_argument(

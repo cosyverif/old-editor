@@ -47,13 +47,14 @@ local port         = args.port
 local image        = args.image
 local verbose_mode = args.verbose
 
-local editor_configuration = require "editor"
+local editor_configuration = require "cosy.editor"
 
 local ev        = require "ev"
 local json      = require "dkjson"
 local websocket = require "websocket"
+local http      = require "socket.http"
 local https     = require "ssl.https"
-local _         = require "util/string"
+local _         = require "cosy.util.string"
 
 if verbose_mode then
   logger:setLevel (logging.DEBUG)
@@ -88,9 +89,9 @@ local function instantiate (resource)
   local editor_port = editor_configuration.port
   do
     local command = ([[
-editor="cosy-editor ${resource}"
+editor="lua cosy.editor ${resource}"
 docker.io run --detach --publish ${port} ${image} ${editor}
-    ]]) {
+    ]]) % {
       port     = editor_port,
       resource = resource,
       image    = image,
@@ -100,8 +101,8 @@ docker.io run --detach --publish ${port} ${image} ${editor}
   end
   do
     local command = ([[
-  docker.io port ${cid} ${port}
-    ]]) {
+docker.io port ${cid} ${port}
+    ]]) % {
       port = editor_port,
       cid  = cid,
     }
@@ -123,21 +124,24 @@ docker.io wait '${cid}'
 docker.io rm ${cid}
 docker.io rmi $(docker.io images | grep '${image}' | tr -s ' ' | cut -f 3 -d ' ')
 rm -f ${script_file}
-    ]]) {
+    ]]) % {
       cid         = cid,
       image       = image,
       script_file = script_file,
     }
-    string.write (script, script_file)
+    local f = io.open (script_file, "w")
+    f:write (script)
+    f:close ()
     command = ([[
 chmod a+x ${script_file}
 bash -c "nohup ${script_file} > /dev/null 2>&1 &"
-    ]]) {
+    ]]) % {
       script_file = script_file,
     }
     logger:debug (command)
   --  execute (command)
   end
+  return editors [resource]
 end
 
 local function from_client (client, message)
@@ -171,7 +175,7 @@ local function from_client (client, message)
   end
   local username = command.username
   local password = command.password
-  resource = resource:gsub ("^http://", "https://")
+--  resource = resource:gsub ("^http://", "https://")
   resource = resource:gsub ("/$", "")
   if username then
     resource = resource:gsub ("^https://", "https://${username}:${password}@" % {
@@ -179,7 +183,9 @@ local function from_client (client, message)
       password = password,
     })
   end
-  local answer, code = https.request (resource)
+--  local answer, code = https.request (resource)
+--[[
+  local answer, code = http.request (resource)
   if not answer or code ~= 200 then
     client:send (json.encode {
       action   = command.action,
@@ -190,7 +196,7 @@ local function from_client (client, message)
     })
     return
   end
-  -- TODO: handle permissions
+--]]
   local editor = instantiate (resource)
   local retry  = true
   client.editor = websocket.client.ev { timeout = 2 }

@@ -70,7 +70,9 @@ local ev        = require "ev"
 local websocket = require "websocket"
 local json      = require "dkjson"
 local lfs       = require "lfs"
-local _         = require "util.string"
+local http      = require "socket.http"
+local https     = require "ssl.https"
+local _         = require "cosy.util.string"
 
 local global = _ENV or _G
 local cosy = {}
