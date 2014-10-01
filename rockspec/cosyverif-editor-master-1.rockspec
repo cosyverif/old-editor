@@ -21,8 +21,8 @@ dependencies = {
 build = {
   type    = "builtin",
   modules = {
-    ["dispatcher" ] = "src/dispatcher.lua",
-    ["editor"     ] = "src/editor.lua",
-    ["util.string"] = "src/util/string.lua",
+    ["cosy.dispatcher" ] = "src/cosy/dispatcher.lua",
+    ["cosy.editor"     ] = "src/cosy/editor.lua",
+    ["cosy.util.string"] = "src/cosy/util/string.lua",
   },
 }
