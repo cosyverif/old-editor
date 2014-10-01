@@ -1,52 +1,50 @@
 #! /usr/bin/env lua
 
 local defaults = {
-  port = 6969,
+  interface = "127.0.0.3",
+  port      = 6969,
   directory = "/home/cosyverif/resource/",
-  safe = false,
-  timeout = 300,
+  commit    = 10,
+  timeout   = 300,
 }
 
-local global = _ENV or _G
-local cosy = {}
-global.cosy = cosy
-
-local logging   = require "logging"
-logging.console = require "logging.console"
-local logger = logging.console "%level %message\n"
-
-local ev        = require "ev"
-local websocket = require "websocket"
-local json      = require "dkjson"
-local lfs       = require "lfs"
-local cli       = require "cliargs"
-
-if #(cli.required) ~= 0 or #(cli.optional) ~= 0 then
+if cli then
   -- Called from another script
   return defaults
 end
+
+      cli       = require "cliargs"
+local logging   = require "logging"
+logging.console = require "logging.console"
+local logger    = logging.console "%level %message\n"
 
 cli:set_name ("editor.lua")
 cli:add_argument(
   "resource",
   "resource to edit"
 )
-cli:add_argument(
-  "token",
-  "identification token for the server"
-)
 cli:add_option(
-  "-d, --directory=<directory>",
+  "--directory=<directory>",
   "path to the model directory",
   tostring (defaults.directory)
 )
 cli:add_option(
-  "-p, --port=<number>",
+  "--interface=<IP address>",
+  "interface to use",
+  tostring (defaults.interface)
+)
+cli:add_option(
+  "--port=<number>",
   "port to use",
   tostring (defaults.port)
 )
 cli:add_option(
-  "-t, --timeout=<in seconds>",
+  "--commit=<in seconds>",
+  "delay between commits to the repository",
+  tostring (defaults.commit)
+)
+cli:add_option(
+  "--timeout=<in seconds>",
   "delay after the last connexion before shutdown",
   tostring (defaults.timeout)
 )
@@ -60,16 +58,23 @@ if not args then
   return
 end
 
-if args.configuration then
-  return defaults
-end
-
 local resource     = args.resource
 local directory    = args.directory
-local admin_token  = args.token
+local interface    = args.interface
 local port         = args.port
+local commit       = tonumber (args.commit)  -- seconds
 local timeout      = tonumber (args.timeout) -- seconds
 local verbose_mode = args.verbose
+
+local ev        = require "ev"
+local websocket = require "websocket"
+local json      = require "dkjson"
+local lfs       = require "lfs"
+local _         = require "util.string"
+
+local global = _ENV or _G
+local cosy = {}
+global.cosy = cosy
 
 if verbose_mode then
   logger:setLevel (logging.DEBUG)
@@ -79,101 +84,21 @@ end
 
 logger:info ("Resource is '" .. resource .. "'.")
 logger:info ("Data directory is '" .. directory .. "'.")
-logger:info ("Administration token is '" .. admin_token .. "'.")
+logger:info ("Commit is set to " .. tostring (commit) .. " seconds.")
 logger:info ("Timeout is set to " .. tostring (timeout) .. " seconds.")
-logger:info ("Safe mode is " .. (safe_mode and "on" or "off") .. ".")
 
-local data_file         = directory .. "/model.lua"
-local patches_directory = directory .. "/patches/"
-local tokens  = {}
 local patches = {}
 local clients = {}
 local timestamp_suffix = 1
 local latest_timestamp = nil
 
-local ADMIN_ACCESS = {}
-local WRITE_ACCESS = {}
-local READ_ACCESS  = {}
-
-tokens [admin_token] = {
-  [ADMIN_ACCESS] = true,
-  [WRITE_ACCESS] = true,
-  [READ_ACCESS ] = true,
-}
-
 local function is_empty (t)
-  return pairs (t) (t, nil) == nil
-end
-
-local function read_file (file)
-  logger:debug ("Reading file '" .. tostring (file) .. "'...")
-  local f = io.open (file, "r")
-  if not f then
-    return nil
-  end
-  local content = f:read ("*all")
-  f:close ()
-  return content
-end
-
-local function write_file (file, s)
-  logger:debug ("Writing file '" .. tostring (file) .. "'...")
-  if not s then
-    return nil
-  end
-  local f = io.open (file, "w")
-  if not f then
-    return nil
-  end
-  f:write (s.. "\n")
-  f:close ()
-end
-
-local function append_file (file, s)
-  logger:debug ("Appending to file '" .. tostring (file) .. "'...")
-  if not s then
-    return nil
-  end
-  local f = io.open (file, "a")
-  if not f then
-    return nil
-  end
-  f:write (s.. "\n")
-  f:close ()
+  return pairs (t) (t) == nil
 end
 
 local function init ()
   logger:info "Initializing the data..."
-  -- Load the data:
-  if lfs.attributes (data_file) then
-    logger:info ("Loading the data from '" .. data_file .. "'...")
-    local ok, err = pcall (dofile, data_file)
-    if not ok then
-      logger:warn (err)
-    end
-  end
-  -- Create the patches directory if it does not exist:
-  if not lfs.attributes (patches_directory) then
-    logger:info ("Creating the patches directory '" .. patches_directory .. "'...")
-    lfs.mkdir (patches_directory)
-  end
-  -- Load the list of patches:
-  logger:info ("Creating the list of patches in '" .. patches_directory .. "'...")
-  for entry in lfs.dir (patches_directory) do
-    if entry:find (".lua") then
-      local id = entry:sub (1, -5) -- remove ".lua"
-      logger:debug ("Adding patch '" .. id .. "' from file '" ..
-                    patches_directory .. entry .. "'...")
-      patches [#patches + 1] = id
-    end
-  end
-  table.sort (patches)
-  if verbose_mode then
-    logger:debug "Found the following patches (from oldest to latest):"
-    for _, p in ipairs (patches) do
-      logger:debug ("  " .. p)
-    end
-  end
+  
   logger:info "End of initialization."
 end
 
@@ -347,53 +272,13 @@ handlers ["add-patch"] = function (client, command)
 
 end
 
-handlers ["set-token"] = function (client, command)
-  local access = tokens [command.token]
-  if not access or not access [ADMIN_ACCESS] then
-    client:send (json.encode {
-      action   = command.action,
-      answer   = command.request_id,
-      accepted = false,
-      reason   = "Command 'set-user' is restricted to administrator.",
-    })
-    return
-  end
-  local token = command.for_token
-  if not token then
-    client:send (json.encode {
-      action   = command.action,
-      answer   = command.request_id,
-      accepted = false,
-      reason   = "Command 'set-user' requires a 'token'.",
-    })
-    return
-  end
-  tokens [token] = {
-    [WRITE_ACCESS] = command.can_write,
-    [READ_ACCESS ] = command.can_read,
-    [ADMIN_ACCESS] = nil,
-  }
-  client:send (json.encode{
-    action   = command.action,
-    answer   = command.request_id,
-    accepted = true,
-  })
-end
-
 local function from_client (client, message)
   -- Extract command and data:
   local command, _, err = json.decode (message)
-  if err then
-    client:send (json.encode {
-      accepted = false,
-      reason   = "Command is not valid JSON: " .. err .. ".",
-    })
-    return
-  end
   if not command then
     client:send (json.encode {
       accepted = false,
-      reason   = "Command is empty.",
+      reason   = "Command is not valid JSON: " .. err .. ".",
     })
     return
   end
@@ -433,16 +318,26 @@ local timer = ev.Timer.new (
   timeout
 )
 
+-- TODO: activate idle when a patch arrivesig
+local idle = ev.Idle.new (
+  function (loop, idle, revents)
+    -- TODO: send patches
+    idle:stop ()
+  end
+)
+
 websocket.server.ev.listen {
-  port = port,
+  interface = interface,
+  port      = port,
   protocols = {
     ["cosy"] = function (client)
       timer:stop (ev.Loop.default)
-      clients [client] = true
+      clients [client] = {
+        read  = false,
+        write = false,
+      }
       logger:info ("Client " .. tostring (client) .. " is connecting...")
-      client:on_message (function (_, message)
-        from_client (client, message)
-      end)
+      client:on_message (from_client)
       client:on_close (function ()
         clients [client] = nil
         client:close ()
@@ -454,7 +349,10 @@ websocket.server.ev.listen {
 }
 
 init ()
-logger:info ("Listening on port " .. tostring (port) .. ".")
+logger:info ("Listening on ws://${interface}:${port}." % {
+  interface = interface,
+  port      = port,
+})
 logger:info "Entering main loop..."
 timer:start (ev.Loop.default, true)
 ev.Loop.default:loop ()
