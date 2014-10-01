@@ -9,7 +9,7 @@ do
   do
     # Generate image:
     cp dockerfiles/cosy-editor Dockerfile
-    from="saucisson/with-minimal:${version}-${arch}"
+    from="saucisson/debian:${version}-${arch}"
     name="saucisson/cosy-editor:${version}-${arch}"
     sed -i -e "s|BASE_IMAGE|${from}|" Dockerfile
     docker.io build --tag ${name} .
