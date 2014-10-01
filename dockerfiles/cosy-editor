@@ -32,18 +32,15 @@ ADD rocks/lpack-master-1.rockspec /tmp/rocks/
 RUN luarocks build /tmp/rocks/lpack-master-1.rockspec
 
 RUN apt-get install -y libssl-dev
-ADD rocks/lua-websockets-master-1.rockspec /tmp/rocks/
-RUN luarocks build /tmp/rocks/lua-websockets-master-1.rockspec
 RUN luarocks install luasec
+RUN luarocks build https://raw.githubusercontent.com/lipp/lua-websockets/master/rockspecs/lua-websockets-scm-1.rockspec
 
 RUN apt-get install -y libev-dev
-ADD rocks/lua-ev-master-1.rockspec /tmp/rocks/
-RUN luarocks build /tmp/rocks/lua-ev-master-1.rockspec
+RUN luarocks build https://raw.githubusercontent.com/brimworks/lua-ev/master/rockspec/lua-ev-scm-1.rockspec
 
-ADD rocks/cosyverif-lang-master-1.rockspec /tmp/rocks/
-RUN luarocks build /tmp/rocks/cosyverif-lang-master-1.rockspec
+RUN luarocks build https://raw.githubusercontent.com/CosyVerif/library/master/rockspec/cosyverif-library-master-1.rockspec
 
-ADD src/editor.lua /usr/local/bin/cosy-editor
+RUN luarocks build https://raw.githubusercontent.com/CosyVerif/editor/master/rockspec/cosyverif-editor-master-1.rockspec
 
 # Clean:
 RUN apt-get purge -y wget make unzip gcc git
