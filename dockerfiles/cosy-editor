@@ -55,3 +55,4 @@ RUN useradd --create-home -G users -d /home/cosyverif -s /bin/bash cosyverif
 USER cosyverif
 WORKDIR /home/cosyverif
 RUN mkdir -p /home/cosyverif/resource
+RUN luarocks path | tr "'" ";" >> /home/cosyverif/.profile
