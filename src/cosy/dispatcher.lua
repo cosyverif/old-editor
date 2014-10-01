@@ -62,12 +62,6 @@ else
   logger:setLevel (logging.INFO)
 end
 
---[[
--- Protocol:
---
--- * `{ action = connect, resource = url }`
---]]
-
 local editors = {}
 
 local function execute (command)
@@ -89,8 +83,8 @@ local function instantiate (resource)
   local editor_port = editor_configuration.port
   do
     local command = ([[
-editor="lua cosy.editor ${resource}"
-docker.io run --detach --publish ${port} ${image} ${editor}
+editor="lua /usr/local/share/lua/5.2/cosy/editor.lua ${resource}"
+docker.io run --detach --publish ${port} ${image} ${editor}'
     ]]) % {
       port     = editor_port,
       resource = resource,
