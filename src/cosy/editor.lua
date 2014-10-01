@@ -24,11 +24,6 @@ cli:add_argument(
   "resource to edit"
 )
 cli:add_option(
-  "--directory=<directory>",
-  "path to the model directory",
-  tostring (defaults.directory)
-)
-cli:add_option(
   "--interface=<IP address>",
   "interface to use",
   tostring (defaults.interface)
@@ -39,13 +34,8 @@ cli:add_option(
   tostring (defaults.port)
 )
 cli:add_option(
-  "--commit=<in seconds>",
-  "delay between commits to the repository",
-  tostring (defaults.commit)
-)
-cli:add_option(
-  "--timeout=<in seconds>",
-  "delay after the last connexion before shutdown",
+  "--timeout=<number in seconds>",
+  "timeout before closing",
   tostring (defaults.timeout)
 )
 cli:add_flag(
@@ -59,11 +49,9 @@ if not args then
 end
 
 local resource     = args.resource
-local directory    = args.directory
 local interface    = args.interface
 local port         = args.port
-local commit       = tonumber (args.commit)  -- seconds
-local timeout      = tonumber (args.timeout) -- seconds
+local timeout      = args.timeout
 local verbose_mode = args.verbose
 
 local ev        = require "ev"
@@ -72,7 +60,9 @@ local json      = require "dkjson"
 local lfs       = require "lfs"
 local http      = require "socket.http"
 local https     = require "ssl.https"
+local ltn12     = require "ltn12"
 local _         = require "cosy.util.string"
+local Data      = require "cosy.data"
 
 local global = _ENV or _G
 local cosy = {}
@@ -84,183 +74,163 @@ else
   logger:setLevel (logging.INFO)
 end
 
+resource = resource:gsub ("^http://", "https://")
+
 logger:info ("Resource is '" .. resource .. "'.")
-logger:info ("Data directory is '" .. directory .. "'.")
-logger:info ("Commit is set to " .. tostring (commit) .. " seconds.")
 logger:info ("Timeout is set to " .. tostring (timeout) .. " seconds.")
 
-local patches = {}
 local clients = {}
-local timestamp_suffix = 1
-local latest_timestamp = nil
+local data    = nil
+local undo    = {}
+
+local global = _G or _ENV
+global.cosy  = Data.new {}
+
+Data.on_write.undo = function (target, value, reverse)
+  undo [#undo + 1] = reverse
+end
 
 local function is_empty (t)
   return pairs (t) (t) == nil
 end
 
-local function init ()
-  logger:info "Initializing the data..."
-  
-  logger:info "End of initialization."
-end
+local timer = ev.Timer.new (
+  function ()
+    if is_empty (clients) then
+      logger:info ("The timeout (" .. timeout .. "s) elapsed since the last client quit.")
+      logger:info "Bye."
+      ev.Loop.default:unloop ()
+    end
+  end,
+  timeout,
+  timeout
+)
+
+-- TODO: activate idle when a patch arrivesig
+--[[
+local idle = ev.Idle.new (
+  function (loop, idle, revents)
+    -- TODO: send patches
+    idle:stop ()
+  end
+)
+--]]
 
 local handlers = {}
 
-handlers ["get-model"] = function (client, command)
-  local access = tokens [command.token]
-  if not access or not access [READ_ACCESS] then
+handlers ["connect"] = function (client, command)
+  if command.resource ~= resource then
     client:send (json.encode {
-      action   = command.action,
-      answer   = command.request_id,
-      accepted = false,
-      reason   = "User does not have 'read' permission.",
-    })
-    return
-  end
-  client:send (json.encode {
-    action   = command.action,
-    answer   = command.request_id,
-    accepted = true,
-    code     = read_file (data_file),
-    version  = patches [#patches],
-  })
-end
-
-handlers ["list-patches"] = function (client, command)
-  local access = tokens [command.token]
-  if not access or not access [READ_ACCESS] then
-    client:send (json.encode {
-      action   = command.action,
-      answer   = command.request_id,
-      accepted = false,
-      reason   = "User does not have 'read' permission.",
-    })
-    return
-  end
-  local from = command.from
-  local to   = command.to
-  local extracted = {}
-  for _, i in ipairs (patches) do
-    if (not from or from <= i) and (not to or i <= to) then
-      extracted [#extracted + 1] = { id = i }
-    end
-  end
-  client:send (json.encode {
-    action   = command.action,
-    answer   = command.request_id,
-    accepted = true,
-    patches  = extracted,
-  })
-end
-
-handlers ["get-patches"] = function (client, command)
-  local access = tokens [command.token]
-  if not access or not access [READ_ACCESS] then
-    client:send (json.encode {
-      action   = command.action,
-      answer   = command.request_id,
-      accepted = false,
-      reason   = "User does not have 'read' permission.",
-    })
-    return
-  end
-  local id   = command.id
-  local from = command.from
-  local to   = command.to
-  local extracted = {}
-  if id and (from or to) then
-    client:send (json.encode {
-      action   = command.action,
-      answer   = command.request_id,
-      accepted = false,
-      reason   = "Command 'get-patches' requires 'id' or ('from'? and 'to'?).",
-    })
-    return
-  elseif id then
-    if lfs.attributes (patches_directory .. id .. ".lua") then
-      extracted [1] = {
-        id = id,
-        data = read_file (patches_directory .. id .. ".lua"),
+      action    = command.action,
+      answer    = command.request_id,
+      accepted  = false,
+      reason    = "I am not an editor for ${resource}." % {
+        resource = command.resource
       }
-    else
-      client:send (json.encode {
-        action   = command.action,
-        answer   = command.request_id,
-        accepted = false,
-        reason   = "Patch '" .. id .. "' does not exist.",
-      })
-      return
-    end
-  else
-    for _, i in ipairs (patches) do
-      if (not from or from <= i) and (not to or i <= to) then
-        extracted [#extracted + 1] = {
-          id = i,
-          code = read_file (patches_directory .. i .. ".lua"),
-        }
-      end
-    end
+    })
+    client:close ()
+    return
+  end
+  local username = command.username
+  local password = command.password
+  local url = resource
+  if username then
+    url = url:gsub("^https://", "https://${username}:${password}@" % {
+      username = username,
+      password = password,
+    })
+  end
+  local answer, code = https.request (url)
+  if not answer or code ~= 200 then
+    client:send (json.encode {
+      action    = command.action,
+      answer    = command.request_id,
+      accepted  = false,
+      reason    = "Resource ${resource} unreachable, because ${reason}." % {
+        resource = command.resource,
+        reason   = code,
+      }
+    })
+    client:close ()
+    return
+  end
+  answer = json.decode (answer)
+  local can_write = answer.is_edit
+  clients [client] = {
+    username  = username,
+    password  = password,
+    can_write = can_write,
+    url       = url,
+  }
+  if not data then
+    data = answer.data or ""
   end
   client:send (json.encode {
-    action   = command.action,
-    answer   = command.request_id,
-    accepted = true,
-    patches  = extracted,
+    action    = command.action,
+    answer    = command.request_id,
+    accepted  = true,
+    data      = data,
+    can_write = can_write,
   })
 end
 
-handlers ["add-patch"] = function (client, command)
-  local access = tokens [command.token]
-  if not access or not access [WRITE_ACCESS] then
+handlers ["patch"] = function (client, command)
+  local function cancel (message)
+    logger:warn ("Cannot apply patch, because: " .. message)
+    for i = #undo, 1, -1 do
+      pcall (undo [i])
+    end
     client:send (json.encode {
       action   = command.action,
       answer   = command.request_id,
       accepted = false,
-      reason   = "User does not have 'write' permission.",
+      reason   = message,
     })
+  end
+  if not clients [client].can_write then
+    cancel ("User does not have write permission.")
+    client:close ()
     return
   end
-  local patch_str = command.data
-  if not patch_str then
-    client:send (json.encode {
-      action   = command.action,
-      answer   = command.request_id,
-      accepted = false,
-      reason   = "Command has no 'data' key containing the patch.",
-    })
+  local patch = command.data
+  if not patch then
+    cancel ("Command does not have a 'data' field containing the patch.")
     return
   end
-  logger:debug ("Asked to add patch: '" .. patch_str .. "'.")
-  local s, err = pcall (function () loadstring (patch_str) () end)
+  logger:debug ("Asked to add patch: '" .. patch .. "'.")
+  local s, err = pcall (function () loadstring (patch) () end)
   if not s then
-    logger:warn ("Cannot apply patch: '" .. patch_str  .. "', because: " .. err)
-    client:send (json.encode {
-      action   = command.action,
-      answer   = command.request_id,
-      accepted = false,
-      reason   = "Error while loading patch: " .. err .. ".",
-    })
+    cancel (err)
     return
   end
-  local timestamp = os.time ()
-  if timestamp == latest_timestamp then
-    timestamp_suffix = timestamp_suffix + 1
-  else
-    timestamp_suffix = 1
-    latest_timestamp = timestamp
+  local sent_data = json.encode { patch = patch }
+  local answer, code = https.request {
+    url    = clients [client].url,
+    method = "PATCH",
+    source = ltn12.source.string (sent_data),
+    headers = {
+      ["content-type"  ] = "application/json",
+      ["content-length"] = #sent_data,
+    },
+  }
+  if code ~= 200 then
+    cancel (code)
+    if code == 503 then
+      client:close ()
+    end
+    return
   end
-  local id = tostring (timestamp) .. "-" .. string.format ("%09d", timestamp_suffix)
-  patches [#patches + 1] = id
-  write_file (patches_directory .. id .. ".lua", patch_str)
-  append_file (data_file, patch_str)
+  -- Accepted:
+  data = data .. "\n" .. patch
+  for i = #undo, 1, -1 do
+    undo [i] = nil
+  end
   local update = json.encode {
     action  = "update",
-    version = patches [#patches],
-    patches = { { id = id, code = patch_str } },
+    patches = { patch },
   }
   for c in pairs (clients) do
     if c ~= client then
-      logger:debug ("  Sending to " .. tostring (client) .. "...")
       c:send (update)
     end
   end
@@ -268,10 +238,8 @@ handlers ["add-patch"] = function (client, command)
     action   = command.action,
     answer   = command.request_id,
     accepted = true,
-    id       = id,
-    version  = patches [#patches],
+    patches  = { patch },
   })
-
 end
 
 local function from_client (client, message)
@@ -291,7 +259,7 @@ local function from_client (client, message)
       action   = command.action,
       answer   = command.request_id,
       accepted = false,
-      reason   = "Command has no 'action' key.",
+      reason   = "Command has no 'action' field.",
     })
     return
   end
@@ -307,26 +275,6 @@ local function from_client (client, message)
     return
   end
 end
-
-local timer = ev.Timer.new (
-  function ()
-    if is_empty (clients) then
-      logger:info ("The timeout (" .. timeout .. "s) elapsed since the last client quit.")
-      logger:info "Bye."
-      ev.Loop.default:unloop ()
-    end
-  end,
-  timeout,
-  timeout
-)
-
--- TODO: activate idle when a patch arrivesig
-local idle = ev.Idle.new (
-  function (loop, idle, revents)
-    -- TODO: send patches
-    idle:stop ()
-  end
-)
 
 websocket.server.ev.listen {
   interface = interface,
@@ -350,7 +298,6 @@ websocket.server.ev.listen {
   }
 }
 
-init ()
 logger:info ("Listening on ws://${interface}:${port}." % {
   interface = interface,
   port      = port,

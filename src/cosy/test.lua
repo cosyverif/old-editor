@@ -15,6 +15,14 @@ cli:add_argument(
   "resource to edit"
 )
 cli:add_option (
+  "--username=<string>",
+  "username"
+)
+cli:add_option (
+  "--password=<string>",
+  "password"
+)
+cli:add_option (
   "--dispatcher=<URL>",
   "dispatcher URL",
   "ws://${server}:${port}" % {
@@ -34,6 +42,8 @@ end
 
 local dispatcher_url = args.dispatcher
 local resource       = args.resource
+local username       = args.username
+local password       = args.password
 local verbose_mode   = args.verbose
 
 logger:info ("Dispatcher is " .. dispatcher_url .. ".")
@@ -48,75 +58,23 @@ do
   client:send (json.encode {
     action   = "connect",
     resource = resource,
+    username = username,
+    password = password,
   })
   print (client:receive())
-  client:close ()
-end
-
-os.exit (1)
-
--- Perform user actions:
-do
-  local client = websocket.client.sync { timeout = 2 }
-  local ok, err = client:connect (dispatcher_url, 'cosy')
-  if not ok then error ('Cannot connect: ' .. err) end
   client:send (json.encode {
-    token    = user_token,
-    action   = "set-resource",
+    action   = "patch",
     resource = resource,
-  })
-  print (client:receive())
-
-  client:send (json.encode {
-    token    = user_token,
-    action = "get-model"
-  })
-  print (client:receive())
-
-  client:send (json.encode {
-    token    = user_token,
-    action = "list-patches"
-  })
-  print (client:receive())
-
-  client:send (json.encode {
-    token    = user_token,
-    action = "add-patch",
-    origin = "me",
+    username = username,
+    password = password,
     data   = [[
-    cosy.model = {}
-    ]]
+cosy ["${resource}"].x = 1
+cosy ["${resource}"].y = 1
+    ]] % {
+      resource = resource,
+    }
   })
   print (client:receive())
 
-  client:send (json.encode {
-    token    = user_token,
-    action = "list-patches"
-  })
-  print (client:receive())
-
-  client:send (json.encode {
-    token    = user_token,
-    action = "add-patch",
-    origin = "me",
-    data = [[
-    cosy.model.x = "some text"
-    cosy.model.y = 42
-    ]]
-  })
-  print (client:receive())
-
-  client:send (json.encode {
-    token    = user_token,
-    action = "get-model"
-  })
-  print (client:receive())
-
-  client:send (json.encode {
-    token    = user_token,
-    action = "get-patches"
-  })
-  print (client:receive())
-
-  client:close()
+  client:close ()
 end

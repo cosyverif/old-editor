@@ -81,6 +81,19 @@ local function instantiate (resource)
   local cid
   local url
   local editor_port = editor_configuration.port
+--[=[
+  do
+    local command = ([[
+nohup lua cosy/editor.lua ${resource} > /dev/null 2>&1 &
+    ]]) % {
+      port     = editor_port,
+      resource = resource,
+      image    = image,
+    }
+    logger:debug (command)
+    url = "ws://127.0.0.3:6969/"
+  end
+--]=]
   do
     local command = ([[
 editor="lua /usr/local/share/lua/5.2/cosy/editor.lua ${resource}"
@@ -169,17 +182,16 @@ local function from_client (client, message)
   end
   local username = command.username
   local password = command.password
---  resource = resource:gsub ("^http://", "https://")
+  resource = resource:gsub ("^http://", "https://")
   resource = resource:gsub ("/$", "")
+  local url = resource
   if username then
-    resource = resource:gsub ("^https://", "https://${username}:${password}@" % {
+    url = resource:gsub ("^https://", "https://${username}:${password}@" % {
       username = username,
       password = password,
     })
   end
---  local answer, code = https.request (resource)
---[[
-  local answer, code = http.request (resource)
+  local answer, code = https.request (url)
   if not answer or code ~= 200 then
     client:send (json.encode {
       action   = command.action,
@@ -190,18 +202,15 @@ local function from_client (client, message)
     })
     return
   end
---]]
   local editor = instantiate (resource)
   local retry  = true
   client.editor = websocket.client.ev { timeout = 2 }
   client.editor:on_open (function ()
     editors [resource] = editor
-    client:send (json.encode {
-      action   = command.action,
-      accepted = true,
-    })
+    client.editor:send (message)
   end)
   client.editor:on_error (function (_, err)
+    print (err)
     editors [resource] = nil
     if retry then
       editor = instantiate (resource)
@@ -248,7 +257,6 @@ websocket.server.ev.listen {
           client.editor:close()
           client.editor = nil
         end
-        client:close ()
         logger:info ("Client " .. tostring (client) .. " has disconnected.")
       end)
     end,
