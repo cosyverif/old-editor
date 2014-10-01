@@ -5,12 +5,19 @@ MAINTAINER alban.linard@lsv.ens-cachan.fr
 RUN apt-get update -y
 
 # Install Lua:
-RUN apt-get install -y lua5.2
-RUN apt-get install -y lua5.2-dev
+RUN apt-get install -y lua5.2 lua5.2-dev
+RUN apt-get install -y wget make unzip gcc git
+
+# Install luajit:
+RUN git clone http://luajit.org/git/luajit-2.0.git && \
+    cd luajit-2.0/ && \
+    sed -i -e 's/#XCFLAGS+= -DLUAJIT_ENABLE_LUA52COMPAT/XCFLAGS+= -DLUAJIT_ENABLE_LUA52COMPAT/' src/Makefile && \
+    make && \
+    make install && \
+    cd ..
 
 # Install luarocks:
 ENV LUAROCKS_VERSION  2.1.2
-RUN apt-get install -y wget make unzip gcc
 RUN cd /tmp && wget http://luarocks.org/releases/luarocks-${LUAROCKS_VERSION}.tar.gz && \
     tar zxvpf luarocks-${LUAROCKS_VERSION}.tar.gz && \
     cd luarocks-${LUAROCKS_VERSION} && \
@@ -19,27 +26,20 @@ RUN cd /tmp && wget http://luarocks.org/releases/luarocks-${LUAROCKS_VERSION}.ta
     cd ..
 
 # Install available rocks:
-RUN luarocks install sha1
-RUN luarocks install serpent
-RUN luarocks install luafilesystem
-RUN luarocks install dkjson
-RUN luarocks install lualogging
-RUN luarocks install lua_cliargs
+RUN apt-get install -y libssl-dev libev-dev
+RUN luarocks search sha1           && luarocks install sha1
+RUN luarocks search luafilesystem  && luarocks install luafilesystem
+RUN luarocks search dkjson         && luarocks install dkjson
+RUN luarocks search lualogging     && luarocks install lualogging
+RUN luarocks search lua_cliargs    && luarocks install lua_cliargs
+RUN luarocks search luasec         && luarocks install luasec
 
 # Install remaining rocks:
-RUN apt-get install -y git
-ADD rocks/lpack-master-1.rockspec /tmp/rocks/
+ADD rockspec/lpack-master-1.rockspec /tmp/rocks/
 RUN luarocks build /tmp/rocks/lpack-master-1.rockspec
-
-RUN apt-get install -y libssl-dev
-RUN luarocks install luasec
-RUN luarocks build https://raw.githubusercontent.com/lipp/lua-websockets/master/rockspecs/lua-websockets-scm-1.rockspec
-
-RUN apt-get install -y libev-dev
 RUN luarocks build https://raw.githubusercontent.com/brimworks/lua-ev/master/rockspec/lua-ev-scm-1.rockspec
-
+RUN luarocks build https://raw.githubusercontent.com/lipp/lua-websockets/master/rockspecs/lua-websockets-scm-1.rockspec
 RUN luarocks build https://raw.githubusercontent.com/CosyVerif/library/master/rockspec/cosyverif-library-master-1.rockspec
-
 RUN luarocks build https://raw.githubusercontent.com/CosyVerif/editor/master/rockspec/cosyverif-editor-master-1.rockspec
 
 # Clean:
