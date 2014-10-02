@@ -3,9 +3,7 @@
 local global = _ENV or _G
 
 local defaults = {
-  interface = "127.0.0.3",
   port      = 6969,
-  directory = "/home/cosyverif/resource/",
   commit    = 10,
   timeout   = 300,
 }
@@ -28,7 +26,7 @@ global.cli:add_argument(
 global.cli:add_option(
   "--interface=<IP address>",
   "interface to use",
-  tostring (defaults.interface)
+  tostring (defaults.interface or "*")
 )
 global.cli:add_option(
   "--port=<number>",
@@ -55,6 +53,10 @@ local interface    = args.interface
 local port         = args.port
 local timeout      = args.timeout
 local verbose_mode = args.verbose
+
+if interface == "*" then
+  interface = nil
+end
 
 local ev        = require "ev"
 local websocket = require "websocket"
@@ -105,16 +107,6 @@ local timer = ev.Timer.new (
   timeout,
   timeout
 )
-
--- TODO: activate idle when a patch arrivesig
---[[
-local idle = ev.Idle.new (
-  function (loop, idle, revents)
-    -- TODO: send patches
-    idle:stop ()
-  end
-)
---]]
 
 local handlers = {}
 
@@ -301,7 +293,7 @@ websocket.server.ev.listen {
 }
 
 logger:info ("Listening on ws://${interface}:${port}." % {
-  interface = interface,
+  interface = interface or "*",
   port      = port,
 })
 logger:info "Entering main loop..."
