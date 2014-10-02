@@ -54,7 +54,7 @@ local editor_configuration = require "cosy.editor"
 local ev        = require "ev"
 local json      = require "dkjson"
 local websocket = require "websocket"
-local https     = require "ssl.https"
+local http      = require "socket.http"
 local _         = require "cosy.util.string"
 
 if verbose_mode then
@@ -183,16 +183,15 @@ local function from_client (client, message)
   end
   local username = command.username
   local password = command.password
-  resource = resource:gsub ("^http://", "https://")
   resource = resource:gsub ("/$", "")
   local url = resource
   if username then
-    url = resource:gsub ("^https://", "https://${username}:${password}@" % {
+    url = resource:gsub ("^http://", "http://${username}:${password}@" % {
       username = username,
       password = password,
     })
   end
-  local answer, code = https.request (url)
+  local answer, code = http.request (url)
   if not answer or code ~= 200 then
     client:send (json.encode {
       action   = command.action,

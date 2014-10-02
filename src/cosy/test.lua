@@ -8,8 +8,9 @@ logging.console  = require "logging.console"
 local logger     = logging.console "%level %message\n"
 local json       = require "dkjson"
 local websocket  = require "websocket"
-local _          = require "cosy.util/string"
-local dispatcher = require "cosy.dispatcher"
+local _          = require "cosy.util.string"
+local dispatcher = require "cosy.editor"
+--local dispatcher = require "cosy.dispatcher"
 
 global.cli:set_name ("client.lua")
 global.cli:add_argument(

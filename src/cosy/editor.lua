@@ -59,21 +59,21 @@ local verbose_mode = args.verbose
 local ev        = require "ev"
 local websocket = require "websocket"
 local json      = require "dkjson"
-local https     = require "ssl.https"
+local http      = require "socket.http"
 local ltn12     = require "ltn12"
 local _         = require "cosy.util.string"
 local Data      = require "cosy.data"
+local Tag       = require "cosy.tag"
 
 local cosy = {}
 global.cosy = cosy
+global.Tag  = Tag
 
 if verbose_mode then
   logger:setLevel (logging.DEBUG)
 else
   logger:setLevel (logging.INFO)
 end
-
-resource = resource:gsub ("^http://", "https://")
 
 logger:info ("Resource is '" .. resource .. "'.")
 logger:info ("Timeout is set to " .. tostring (timeout) .. " seconds.")
@@ -122,7 +122,7 @@ handlers ["connect"] = function (client, command)
   if command.resource ~= resource then
     client:send (json.encode {
       action    = command.action,
-      answer    = command.request_id,
+      answer    = command.request,
       accepted  = false,
       reason    = "I am not an editor for ${resource}." % {
         resource = command.resource
@@ -135,16 +135,16 @@ handlers ["connect"] = function (client, command)
   local password = command.password
   local url = resource
   if username then
-    url = url:gsub ("^https://", "https://${username}:${password}@" % {
+    url = url:gsub ("^http://", "http://${username}:${password}@" % {
       username = username,
       password = password,
     })
   end
-  local answer, code = https.request (url)
+  local answer, code = http.request (url)
   if not answer or code ~= 200 then
     client:send (json.encode {
       action    = command.action,
-      answer    = command.request_id,
+      answer    = command.request,
       accepted  = false,
       reason    = "Resource ${resource} unreachable, because ${reason}." % {
         resource = command.resource,
@@ -167,7 +167,7 @@ handlers ["connect"] = function (client, command)
   end
   client:send (json.encode {
     action    = command.action,
-    answer    = command.request_id,
+    answer    = command.request,
     accepted  = true,
     data      = data,
     can_write = can_write,
@@ -182,7 +182,7 @@ handlers ["patch"] = function (client, command)
     end
     client:send (json.encode {
       action   = command.action,
-      answer   = command.request_id,
+      answer   = command.request,
       accepted = false,
       reason   = message,
     })
@@ -206,7 +206,7 @@ handlers ["patch"] = function (client, command)
   local sent_data = json.encode {
     data = patch
   }
-  local _, code = https.request {
+  local _, code = http.request {
     url    = clients [client].url,
     method = "PATCH",
     source = ltn12.source.string (sent_data),
@@ -229,7 +229,7 @@ handlers ["patch"] = function (client, command)
   end
   local update = json.encode {
     action  = "update",
-    patches = { patch },
+    data    = patch,
   }
   for c in pairs (clients) do
     if c ~= client then
@@ -238,9 +238,9 @@ handlers ["patch"] = function (client, command)
   end
   client:send (json.encode {
     action   = command.action,
-    answer   = command.request_id,
+    answer   = command.request,
     accepted = true,
-    patches  = { patch },
+    data     = patch,
   })
 end
 
@@ -259,7 +259,7 @@ local function from_client (client, message)
   if not action then
     client:send (json.encode {
       action   = command.action,
-      answer   = command.request_id,
+      answer   = command.request,
       accepted = false,
       reason   = "Command has no 'action' field.",
     })
@@ -270,7 +270,7 @@ local function from_client (client, message)
   else
     client:send (json.encode {
       action   = command.action,
-      answer   = command.request_id,
+      answer   = command.request,
       accepted = false,
       reason   = "Action '" .. action .. "' is not defined.",
     })
