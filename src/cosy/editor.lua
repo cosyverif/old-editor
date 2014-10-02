@@ -1,5 +1,7 @@
 #! /usr/bin/env lua
 
+local global = _ENV or _G
+
 local defaults = {
   interface = "127.0.0.3",
   port      = 6969,
@@ -8,43 +10,43 @@ local defaults = {
   timeout   = 300,
 }
 
-if cli then
+if global.cli then
   -- Called from another script
   return defaults
 end
 
-      cli       = require "cliargs"
+global.cli      = require "cliargs"
 local logging   = require "logging"
 logging.console = require "logging.console"
 local logger    = logging.console "%level %message\n"
 
-cli:set_name ("editor.lua")
-cli:add_argument(
+global.cli:set_name ("editor.lua")
+global.cli:add_argument(
   "resource",
   "resource to edit"
 )
-cli:add_option(
+global.cli:add_option(
   "--interface=<IP address>",
   "interface to use",
   tostring (defaults.interface)
 )
-cli:add_option(
+global.cli:add_option(
   "--port=<number>",
   "port to use",
   tostring (defaults.port)
 )
-cli:add_option(
+global.cli:add_option(
   "--timeout=<number in seconds>",
   "timeout before closing",
   tostring (defaults.timeout)
 )
-cli:add_flag(
+global.cli:add_flag(
   "-v, --verbose",
   "enable verbose mode"
 )
-local args = cli:parse_args ()
+local args = global.cli:parse_args ()
 if not args then
-  cli:print_help()
+  global.cli:print_help()
   return
 end
 
@@ -57,14 +59,11 @@ local verbose_mode = args.verbose
 local ev        = require "ev"
 local websocket = require "websocket"
 local json      = require "dkjson"
-local lfs       = require "lfs"
-local http      = require "socket.http"
 local https     = require "ssl.https"
 local ltn12     = require "ltn12"
 local _         = require "cosy.util.string"
 local Data      = require "cosy.data"
 
-local global = _ENV or _G
 local cosy = {}
 global.cosy = cosy
 
@@ -83,10 +82,11 @@ local clients = {}
 local data    = nil
 local undo    = {}
 
-local global = _G or _ENV
 global.cosy  = Data.new {}
 
 Data.on_write.undo = function (target, value, reverse)
+  target = target
+  value  = value
   undo [#undo + 1] = reverse
 end
 
@@ -135,7 +135,7 @@ handlers ["connect"] = function (client, command)
   local password = command.password
   local url = resource
   if username then
-    url = url:gsub("^https://", "https://${username}:${password}@" % {
+    url = url:gsub ("^https://", "https://${username}:${password}@" % {
       username = username,
       password = password,
     })
@@ -203,8 +203,10 @@ handlers ["patch"] = function (client, command)
     cancel (err)
     return
   end
-  local sent_data = json.encode { patch = patch }
-  local answer, code = https.request {
+  local sent_data = json.encode {
+    data = patch
+  }
+  local _, code = https.request {
     url    = clients [client].url,
     method = "PATCH",
     source = ltn12.source.string (sent_data),
@@ -215,7 +217,7 @@ handlers ["patch"] = function (client, command)
   }
   if code ~= 200 then
     cancel (code)
-    if code == 503 then
+    if code == 403 then
       client:close ()
     end
     return

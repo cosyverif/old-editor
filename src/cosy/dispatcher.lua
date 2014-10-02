@@ -1,44 +1,46 @@
 #! /usr/bin/env lua
 
+local global = _ENV or _G
+
 local defaults = {
   interface = "127.0.0.3",
   port      = 8080,
   image     = "saucisson/cosy-editor:testing-i386",
 }
 
-if cli then
+if global.cli then
   -- Called from another script
   return defaults
 end
 
-      cli       = require "cliargs"
+global.cli      = require "cliargs"
 local logging   = require "logging"
 logging.console = require "logging.console"
 local logger    = logging.console "%level %message\n"
 
-cli:set_name ("dispatcher.lua")
-cli:add_option(
+global.cli:set_name ("dispatcher.lua")
+global.cli:add_option(
   "--interface=<IP address>",
   "interface to use",
   tostring (defaults.interface)
 )
-cli:add_option(
+global.cli:add_option(
   "--port=<number>",
   "port to use",
   tostring (defaults.port)
 )
-cli:add_option(
+global.cli:add_option(
   "--image=<docker ID>",
   "port to use",
   tostring (defaults.image)
 )
-cli:add_flag(
+global.cli:add_flag(
   "-v, --verbose",
   "enable verbose mode"
 )
-local args = cli:parse_args ()
+local args = global.cli:parse_args ()
 if not args then
-  -- cli:print_help()
+  global.cli:print_help()
   os.exit (1)
 end
 
@@ -52,7 +54,6 @@ local editor_configuration = require "cosy.editor"
 local ev        = require "ev"
 local json      = require "dkjson"
 local websocket = require "websocket"
-local http      = require "socket.http"
 local https     = require "ssl.https"
 local _         = require "cosy.util.string"
 

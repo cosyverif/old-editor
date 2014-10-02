@@ -1,6 +1,8 @@
 #! /usr/bin/env lua
 
-      cli        = require "cliargs"
+local global = _ENV or _G
+
+global.cli       = require "cliargs"
 local logging    = require "logging"
 logging.console  = require "logging.console"
 local logger     = logging.console "%level %message\n"
@@ -9,20 +11,20 @@ local websocket  = require "websocket"
 local _          = require "cosy.util/string"
 local dispatcher = require "cosy.dispatcher"
 
-cli:set_name ("client.lua")
-cli:add_argument(
+global.cli:set_name ("client.lua")
+global.cli:add_argument(
   "resource",
   "resource to edit"
 )
-cli:add_option (
+global.cli:add_option (
   "--username=<string>",
   "username"
 )
-cli:add_option (
+global.cli:add_option (
   "--password=<string>",
   "password"
 )
-cli:add_option (
+global.cli:add_option (
   "--dispatcher=<URL>",
   "dispatcher URL",
   "ws://${server}:${port}" % {
@@ -30,13 +32,13 @@ cli:add_option (
     port   = dispatcher.port,
   }
 )
-cli:add_flag (
+global.cli:add_flag (
   "-v, --verbose",
   "enable verbose mode"
 )
-local args = cli:parse_args ()
+local args = global.cli:parse_args ()
 if not args then
-  cli:print_help()
+  global.cli:print_help()
   return
 end
 
