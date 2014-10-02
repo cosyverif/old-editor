@@ -63,6 +63,8 @@ else
   logger:setLevel (logging.INFO)
 end
 
+local current_port = 7000
+
 local editors = {}
 
 local function execute (command)
@@ -77,11 +79,13 @@ end
 local function instantiate (resource)
   local editor = editors [resource]
   if editor then
-    return editor
+    local e = websocket.client.sync { timeout = 1 }
+    if e:connect (editor, 'cosy') then
+      e:close ()
+      return editor
+    end
   end
-  local cid
   local url
-  local editor_port = editor_configuration.port
 --[=[
   do
     local command = ([[
@@ -95,6 +99,9 @@ nohup lua cosy/editor.lua ${resource} > /dev/null 2>&1 &
     url = "ws://127.0.0.3:6969/"
   end
 --]=]
+--[=[
+  local cid
+  local editor_port = editor_configuration.port
   do
     local command = ([[
 editor="lua /usr/local/share/lua/5.2/cosy/editor.lua ${resource}"
@@ -149,6 +156,24 @@ bash -c "nohup ${script_file} > /dev/null 2>&1 &"
     logger:debug (command)
   --  execute (command)
   end
+--]=]
+  do
+    local command = ([[
+nohup lua cosy/editor.lua --port=${port} ${resource} > /dev/null 2>&1 &
+    ]]) % {
+      port     = current_port,
+      resource = resource,
+    }
+    url = "ws://127.0.0.3:${port}/" % {
+      port = current_port,
+    }
+    current_port = current_port + 1
+    logger:debug (command)
+    execute (command)
+  end
+  editors [resource] = url
+  logger:info ("Resource " .. tostring (resource) ..
+               " is now mapped to " .. tostring (url) .. ".")
   return editors [resource]
 end
 
@@ -202,31 +227,26 @@ local function from_client (client, message)
     })
     return
   end
-  local editor = instantiate (resource)
-  local retry  = true
-  client.editor = websocket.client.ev { timeout = 2 }
+  local editor  = instantiate (resource)
+  client.waiting = {}
+  client.editor = websocket.client.ev { timeout = 1 }
   client.editor:on_open (function ()
     editors [resource] = editor
     client.editor:send (message)
+    for _, m in ipairs (client.waiting) do
+      client.editor:send (m)
+    end
   end)
   client.editor:on_error (function (_, err)
-    print (err)
-    editors [resource] = nil
-    if retry then
-      editor = instantiate (resource)
-      retry  = false
-      client.editor:connect (editor, 'cosy')
-    else
-      client.editor = nil
-      client:send (json.encode {
-        action   = command.action,
-        accepted = false,
-        reason   = "Unable to connect to resource server, because ${err}." % {
-          err = err
-        },
-      })
-      client:close ()
-    end
+    client.editor = nil
+    client:send (json.encode {
+      action   = command.action,
+      accepted = false,
+      reason   = "Unable to connect to resource server, because ${err}." % {
+        err = err
+      },
+    })
+    client:close ()
   end)
   client.editor:on_close (function ()
     client.editor = nil
@@ -240,9 +260,17 @@ local function from_client (client, message)
     client:send (message)
   end)
   client:on_message (function (_, message)
-    client.editor:send (message)
+    if client.editor.state == "OPEN" then
+      client.editor:send (message)
+    else
+      client.waiting [#(client.waiting) + 1] = message
+    end
   end)
-  client.editor:connect (editor, 'cosy')
+  local function connect (loop, timer, revents)
+    client.editor:connect (editor, 'cosy')
+  end
+  local timer = ev.Timer.new (connect, 1, 0)
+  timer:start (ev.Loop.default)
 end
 
 websocket.server.ev.listen {
