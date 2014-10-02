@@ -4,7 +4,7 @@ local global = _ENV or _G
 
 local defaults = {
   interface = "127.0.0.3",
-  port      = 8080,
+  port      = 80,
   image     = "saucisson/cosy-editor:testing-i386",
 }
 
