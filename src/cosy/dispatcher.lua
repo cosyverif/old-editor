@@ -4,7 +4,7 @@ local global = _ENV or _G
 
 local defaults = {
   interface = "127.0.0.3",
-  port      = 80,
+  port      = 8080,
   image     = "saucisson/cosy-editor:testing-i386",
 }
 
@@ -98,7 +98,7 @@ nohup lua cosy/editor.lua ${resource} > /dev/null 2>&1 &
   do
     local command = ([[
 editor="lua /usr/local/share/lua/5.2/cosy/editor.lua ${resource}"
-docker.io run --detach --publish ${port} ${image} ${editor}'
+docker.io run --detach --publish ${port} ${image} ${editor}
     ]]) % {
       port     = editor_port,
       resource = resource,
