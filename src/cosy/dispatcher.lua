@@ -158,11 +158,17 @@ bash -c "nohup ${script_file} > /dev/null 2>&1 &"
   end
 --]=]
   do
-    local command = ([[
-nohup lua cosy/editor.lua --port=${port} ${resource} > /dev/null 2>&1 &
+    local command = [[
+      mktemp --tmpdir=.
+    ]]
+    logger:debug (command)
+    local script_file = execute (command) [1]
+    command = ([[
+nohup lua cosy/editor.lua --port=${port} ${resource} > ${output}.tmp 2>&1 &
     ]]) % {
       port     = current_port,
       resource = resource,
+      outpout  = script_file,
     }
     url = "ws://127.0.0.3:${port}/" % {
       port = current_port,
@@ -227,9 +233,9 @@ local function from_client (client, message)
     })
     return
   end
-  local editor  = instantiate (resource)
+  local editor   = instantiate (resource)
   client.waiting = {}
-  client.editor = websocket.client.ev { timeout = 1 }
+  client.editor  = websocket.client.ev { timeout = 1 }
   client.editor:on_open (function ()
     editors [resource] = editor
     client.editor:send (message)
@@ -267,7 +273,9 @@ local function from_client (client, message)
     end
   end)
   local function connect (loop, timer, revents)
-    client.editor:connect (editor, 'cosy')
+    if client.editor then
+      client.editor:connect (editor, 'cosy')
+    end
   end
   local timer = ev.Timer.new (connect, 1, 0)
   timer:start (ev.Loop.default)
