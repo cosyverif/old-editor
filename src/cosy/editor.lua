@@ -177,6 +177,7 @@ handlers ["patch"] = function (client, command)
       answer   = command.request,
       accepted = false,
       reason   = message,
+      data     = command.data
     })
   end
   if not clients [client].can_write then
@@ -192,6 +193,7 @@ handlers ["patch"] = function (client, command)
   logger:debug ("Asked to add patch: '" .. patch .. "'.")
   local s, err = pcall (function () loadstring (patch) () end)
   if not s then
+    logger:warn (patch)
     cancel (err)
     return
   end
@@ -276,10 +278,6 @@ websocket.server.ev.listen {
   protocols = {
     ["cosy"] = function (client)
       timer:stop (ev.Loop.default)
-      clients [client] = {
-        read  = false,
-        write = false,
-      }
       logger:info ("Client " .. tostring (client) .. " is connecting...")
       client:on_message (from_client)
       client:on_close (function ()
